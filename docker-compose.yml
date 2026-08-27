@@ -1,0 +1,8 @@
+services:
+  epic-map:
+    build: .
+    image: epic-order-map
+    container_name: epic-order-map
+    ports:
+      - "8080:80"
+    restart: unless-stopped
