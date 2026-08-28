@@ -98,7 +98,12 @@ export function computeScene({ orders, drvIds, date, eps, k, minKm, driverInfo }
       });
     };
 
-    for (const o of dOrders.filter(x => x.epic && x.hasCoord)) addMarker(o, o.assigned ? "good" : "removed");
+    for (const o of dOrders.filter(x => x.epic && x.hasCoord)) {
+      // đơn gợi ý bị gỡ: hiện ai giao thực tế (từ cột actual_driver_name nếu có)
+      const extra = (!o.assigned && o.actualNames && o.actualIds !== o.driver)
+        ? `<br>↪ Giao thực tế: <b>${esc(o.actualNames)}</b>` : "";
+      addMarker(o, o.assigned ? "good" : "removed", extra);
+    }
 
     // hồ sơ địa chỉ vùng trung tâm: đơn EPIC + đơn ngoài-nhưng-gần → bắt đơn sai định vị
     const centerProfile = D.buildCenterProfile(

@@ -49,6 +49,8 @@ export function loadOrders(csvText) {
     name: findCol("driver_name", "ten_nv", "ten_nvpttt", "nv_name", "name"),
     bc: findCol("bc_name", "bc", "hub_name", "ten_bc", "station_name", "buu_cuc"),
     address: findCol("contact_address", "address", "dia_chi", "diachi"),
+    actualId: findCol("actual_driver_id"),
+    actualName: findCol("actual_driver_name"),
   };
   const orders = [];
   for (let i = 1; i < rows.length; i++) {
@@ -70,6 +72,9 @@ export function loadOrders(csvText) {
       bc: idx.bc >= 0 ? (r[idx.bc] || "").trim() : "",
       // một số file export bọc địa chỉ trong nháy kép thừa → gỡ bỏ
       address: idx.address >= 0 ? (r[idx.address] || "").trim().replace(/^"+|"+$/g, "").trim() : "",
+      // ai THỰC SỰ giao đơn (có thể nhiều người, cách nhau dấu phẩy) — khác driver_id ở đơn EPIC bị gỡ
+      actualIds: idx.actualId >= 0 ? (r[idx.actualId] || "").trim() : "",
+      actualNames: idx.actualName >= 0 ? (r[idx.actualName] || "").trim() : "",
     });
   }
   return orders;
@@ -101,6 +106,9 @@ export function loadDriverMap(csvText) {
 export function buildDriverInfo(orders, extCsvText) {
   const info = {};
   for (const o of orders) {
+    // dòng EPIC bị gỡ (is_assigned=0) mang tên NGƯỜI GIAO THẬT chứ không phải tên của driver_id
+    // → chỉ lấy tên từ dòng đã gán cho chính tài xế đó
+    if (!o.assigned) continue;
     if (o.name || o.bc) info[o.driver] = { name: o.name || "", bc: o.bc || "" };
   }
   if (extCsvText) {
