@@ -27,7 +27,7 @@ const KIND_LABEL = {
   misgeo: "🟣 Sai định vị — đơn thực tế thuộc địa bàn trung tâm",
 };
 
-export function computeScene({ orders, drvIds, date, eps, k, minKm, driverInfo }) {
+export function computeScene({ orders, drvIds, date, eps, k, minKm, driverInfo, auto }) {
   const drvSet = new Set(drvIds);
   const dayOrders = orders.filter(o => drvSet.has(o.driver) && o.date === date);
   const colorOf = id => PALETTE[Math.max(0, drvIds.indexOf(id)) % PALETTE.length];
@@ -70,10 +70,14 @@ export function computeScene({ orders, drvIds, date, eps, k, minKm, driverInfo }
   /* ---- chế độ detect: chạy RIÊNG từng tài xế (vùng EPIC là của cá nhân) rồi tổng hợp ---- */
   let clusterCount = 0;
   const dets = [];
+  const epsUsed = [];
   for (const id of drvIds) {
     const dOrders = dayOrders.filter(o => o.driver === id);
     if (!dOrders.length) continue;
-    const det = D.detect(dOrders, { epsMeters: eps, k, minKm });
+    // chế độ tự đề xuất: tham số tính RIÊNG theo phân bố điểm EPIC của từng tài xế
+    const params = auto ? D.suggestParams(dOrders) : { epsMeters: eps, k, minKm };
+    epsUsed.push(params.epsMeters);
+    const det = D.detect(dOrders, params);
     dets.push(det);
     clusterCount += det.clusters.length;
     const dColor = colorOf(id);
@@ -145,7 +149,8 @@ export function computeScene({ orders, drvIds, date, eps, k, minKm, driverInfo }
       id, color: dColor, name: nameOf(id),
       total: dOrders.filter(o => o.assigned).length, far: farCnt,
       sub: `ID ${id} · %gợi ý ${epicTotal ? Math.round(100 * epicAssigned / epicTotal) + "%" : "–"}` +
-           ` · ngoài ${dOrders.filter(o => !o.epic && o.assigned).length}`,
+           ` · ngoài ${dOrders.filter(o => !o.epic && o.assigned).length}` +
+           (auto ? ` · eps ${params.epsMeters}m` : ""),
     });
   }
 
@@ -170,6 +175,8 @@ export function computeScene({ orders, drvIds, date, eps, k, minKm, driverInfo }
       threshold: dets.length === 1 ? dets[0].threshold : null,
       noiseCnt: dets.filter(d => d.allNoise).length,
       maybeCnt: farRows.filter(r => r.verdict === "B").length,
+      epsMin: epsUsed.length ? Math.min(...epsUsed) : null,
+      epsMax: epsUsed.length ? Math.max(...epsUsed) : null,
     },
   };
 }

@@ -16,6 +16,7 @@ export default function App() {
   const [k, setK] = useState(3);
   const [minKm, setMinKm] = useState(1);
   const [sort, setSort] = useState("don");
+  const [auto, setAuto] = useState(true); // tự đề xuất tham số theo từng tài xế
   const [focused, setFocused] = useState(() => new Set());
   const [toggles, setToggles] = useState({ hull: true, order: true, far: true });
   const [activeCode, setActiveCode] = useState(null);
@@ -57,8 +58,8 @@ export default function App() {
 
   /* ---- tính toàn cảnh ---- */
   const scene = useMemo(
-    () => computeScene({ orders, drvIds, date, eps, k, minKm, driverInfo }),
-    [orders, drvKey, date, eps, k, minKm, driverInfo],
+    () => computeScene({ orders, drvIds, date, eps, k, minKm, driverInfo, auto }),
+    [orders, drvKey, date, eps, k, minKm, driverInfo, auto],
   );
 
   const sortedDrv = useMemo(() => {
@@ -114,6 +115,7 @@ export default function App() {
   }
 
   const st = scene.stats;
+  const effK = auto ? 3 : k, effMin = auto ? 1 : minKm; // giá trị hiệu lực khi bật tự đề xuất
   return (
     <div className="app">
       <header>
@@ -141,20 +143,24 @@ export default function App() {
               {dates.map(d => <option key={d} value={d}>{d}</option>)}
             </select>
           </div>
-          <div className="ctl">
+          <label className="ctl autobox" title="Tính eps riêng cho từng tài xế theo mật độ điểm EPIC (P90 láng giềng); k=3, sàn 1km theo backtest">
+            <input type="checkbox" checked={auto} onChange={e => setAuto(e.target.checked)} />
+            Tự đề xuất tham số
+          </label>
+          <div className={"ctl" + (auto ? " dim" : "")}>
             <label>DBSCAN eps</label>
-            <input type="range" min="100" max="1000" step="50" value={eps} onChange={e => setEps(+e.target.value)} />
-            <span className="val">{eps} m</span>
+            <input type="range" min="100" max="1000" step="50" value={eps} disabled={auto} onChange={e => setEps(+e.target.value)} />
+            <span className="val">{auto ? "auto" : eps + " m"}</span>
           </div>
-          <div className="ctl">
+          <div className={"ctl" + (auto ? " dim" : "")}>
             <label>Hệ số k</label>
-            <input type="range" min="1" max="6" step="0.5" value={k} onChange={e => setK(+e.target.value)} />
-            <span className="val">{k.toFixed(1)}×</span>
+            <input type="range" min="1" max="6" step="0.5" value={k} disabled={auto} onChange={e => setK(+e.target.value)} />
+            <span className="val">{auto ? "3.0×" : k.toFixed(1) + "×"}</span>
           </div>
-          <div className="ctl">
+          <div className={"ctl" + (auto ? " dim" : "")}>
             <label>Ngưỡng tối thiểu</label>
-            <input type="range" min="0.2" max="3" step="0.1" value={minKm} onChange={e => setMinKm(+e.target.value)} />
-            <span className="val">{minKm.toFixed(1)} km</span>
+            <input type="range" min="0.2" max="3" step="0.1" value={minKm} disabled={auto} onChange={e => setMinKm(+e.target.value)} />
+            <span className="val">{auto ? "1.0 km" : minKm.toFixed(1) + " km"}</span>
           </div>
           <label className="filebtn">Nạp CSV khác…
             <input type="file" accept=".csv" style={{ display: "none" }} onChange={onUpload} />
@@ -263,12 +269,14 @@ export default function App() {
                 <>Chế độ <b>toàn đơn</b> — file không có cột <b>is_epic / is_assigned</b> nên không chạy phát hiện;
                   mỗi tài xế một màu. Ngày này: <b>{st.totalOrders}</b> đơn / <b>{st.drvCount}</b> tài xế.</>
               ) : driver === ALL_DRV ? (
-                <>Ngưỡng "xa" tính <b>riêng từng tài xế</b> = max(<b>{minKm.toFixed(1)} km</b>, {k.toFixed(1)} × P90 láng giềng nội cụm của tài xế đó)
+                <>{auto && st.epsMin != null && <>⚙ <b>Tham số tự đề xuất theo từng tài xế</b> — eps <b>{st.epsMin === st.epsMax ? `${st.epsMin} m` : `${st.epsMin}–${st.epsMax} m`}</b> (≈ P90 láng giềng điểm EPIC của mỗi người), k = 3, sàn 1 km.<br /></>}
+                  Ngưỡng "xa" tính <b>riêng từng tài xế</b> = max(<b>{effMin.toFixed(1)} km</b>, {effK.toFixed(1)} × P90 láng giềng nội cụm của tài xế đó)
                   {st.thMin != null && <> — hôm nay dao động <b>{fmtKm(st.thMin)}</b> → <b>{fmtKm(st.thMax)}</b>.</>}
                   {st.noiseCnt > 0 && <><br />⚠ {st.noiseCnt} tài xế không tạo được cụm EPIC — so với toàn bộ điểm gợi ý của người đó.</>}
                 </>
               ) : (
-                <>Ngưỡng "xa" = max(<b>{minKm.toFixed(1)} km</b>, {k.toFixed(1)} × P90 khoảng cách láng giềng nội cụm
+                <>{auto && st.epsMin != null && <>⚙ <b>Tham số tự đề xuất</b> — eps <b>{st.epsMin} m</b> (≈ P90 láng giềng điểm EPIC), k = 3, sàn 1 km.<br /></>}
+                  Ngưỡng "xa" = max(<b>{effMin.toFixed(1)} km</b>, {effK.toFixed(1)} × P90 khoảng cách láng giềng nội cụm
                   {st.p90 != null && <> <b>{fmtKm(st.p90)}</b></>}) {st.threshold != null && <>= <b>{fmtKm(st.threshold)}</b>.</>}
                   {st.noiseCnt > 0 && <><br />⚠ DBSCAN không tạo được cụm nào — đang so với toàn bộ điểm EPIC.</>}
                 </>

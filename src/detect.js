@@ -41,13 +41,13 @@ export function loadOrders(csvText) {
   const findCol = (...names) => { for (const n of names) { const i = header.indexOf(n); if (i >= 0) return i; } return -1; };
   const idx = {
     date: header.indexOf("load_date"),
-    driver: header.indexOf("driver_id"),
+    driver: findCol("driver_id", "employee_id"),
     code: header.indexOf("order_code"),
     latlng: header.indexOf("contact_latlng"),
     epic: header.indexOf("is_epic"),
     assigned: header.indexOf("is_assigned"),
     name: findCol("driver_name", "ten_nv", "ten_nvpttt", "nv_name", "name"),
-    bc: findCol("bc_name", "bc", "hub_name", "ten_bc", "station_name", "buu_cuc"),
+    bc: findCol("bc_name", "warehouse_name", "bc", "hub_name", "ten_bc", "station_name", "buu_cuc"),
     address: findCol("contact_address", "address", "dia_chi", "diachi"),
     actualId: findCol("actual_driver_id"),
     actualName: findCol("actual_driver_name"),
@@ -86,7 +86,7 @@ export function loadDriverMap(csvText) {
   if (!rows.length) return {};
   const header = rows[0].map(h => h.trim().toLowerCase());
   const findCol = (...names) => { for (const n of names) { const i = header.indexOf(n); if (i >= 0) return i; } return -1; };
-  const iId = findCol("driver_id", "id");
+  const iId = findCol("driver_id", "employee_id", "id");
   const iName = findCol("driver_name", "ten_nv", "ten_nvpttt", "nv_name", "name");
   const iBc = findCol("bc_name", "bc", "hub_name", "ten_bc", "station_name", "buu_cuc");
   if (iId < 0) return {};
@@ -250,6 +250,32 @@ export function percentile(sorted, p) {
   const i = (sorted.length - 1) * p;
   const lo = Math.floor(i), hi = Math.ceil(i);
   return sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo);
+}
+
+/* ============ Tự đề xuất tham số theo dữ liệu từng tài xế ============
+   eps ≈ P90 khoảng cách láng giềng gần nhất giữa các điểm EPIC của tài xế đó
+   (làm tròn bội 50m, kẹp trong [200m, 800m] — dày quá không xé vụn vùng,
+   thưa quá không nhập nhầm các vùng tách biệt).
+   k = 3 và sàn 1km giữ cố định theo backtest 06–13/08. */
+export function suggestParams(orders) {
+  const pts = orders.filter(o => o.epic && o.hasCoord);
+  let eps = 400; // mặc định khi quá ít điểm để ước lượng
+  if (pts.length >= 3) {
+    const nn = [];
+    for (let i = 0; i < pts.length; i++) {
+      let best = Infinity;
+      for (let j = 0; j < pts.length; j++) {
+        if (i === j) continue;
+        const d = haversine(pts[i], pts[j]);
+        if (d < best) best = d;
+      }
+      if (isFinite(best)) nn.push(best);
+    }
+    nn.sort((a, b) => a - b);
+    const p90 = percentile(nn, 0.9);
+    eps = Math.min(800, Math.max(200, Math.round(p90 / 50) * 50));
+  }
+  return { epsMeters: eps, k: 3, minKm: 1 };
 }
 
 /* ============ Thuật toán phát hiện chính ============ */

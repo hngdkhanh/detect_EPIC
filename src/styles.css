@@ -48,6 +48,12 @@ header h1 .sub { color: var(--muted); font-weight: 400; font-size: 12px; margin-
   font-size: 12.5px; padding: 5px 10px; border: 1px solid var(--hairline);
   border-radius: 6px; background: var(--surface); cursor: pointer; color: var(--ink-2);
 }
+.autobox {
+  font-size: 12.5px; color: var(--ink-2); cursor: pointer; user-select: none;
+  border: 1px solid var(--hairline); border-radius: 6px; padding: 4px 10px; background: var(--surface);
+}
+.autobox input { accent-color: var(--accent); width: 13px; height: 13px; cursor: pointer; }
+.ctl.dim { opacity: .45; }
 .filebtn:hover { background: var(--page); }
 
 main { flex: 1; display: flex; min-height: 0; }
