@@ -3,14 +3,22 @@ import { useEffect, useState } from "react";
 
 const BQ_QUERY = `DECLARE DS_START DATE DEFAULT DATE '2026-08-25';
 DECLARE DS_END   DATE DEFAULT DATE '2026-08-25';
-DECLARE V_DRIVER_IDS ARRAY<STRING> DEFAULT [
-  '3012244','3022603','3118691','3113106','3133188','3134916','3135467','3143228','3144869','3147902','3160403','3172266'
-];
 
-WITH assigned AS (
+WITH drivers AS (
+  SELECT DISTINCT
+         salary_date AS load_date,
+         warehouse_id,
+         warehouse_name,
+         CAST(employee_id AS STRING) AS driver_id,
+         driver_name
+  FROM \`ghn-reporting.testing.epic_result\`
+  WHERE salary_date BETWEEN DS_START AND DS_END
+    AND COALESCE(total_salary_plan, 0) + COALESCE(salary_giao_unplanned, 0) > 0
+),
+
+assigned AS (
   SELECT  DATE(COALESCE(s.updated_time, s.created_time)) AS load_date,
           b.driver_id,
-          b.driver_name,
           s.order_code,
           s.contact_address,
           CONCAT(CAST(s.contact_lat AS STRING), ',', CAST(s.contact_lng AS STRING)) AS contact_latlng
@@ -22,34 +30,60 @@ WITH assigned AS (
     AND DATE(COALESCE(s.updated_time, s.created_time)) BETWEEN DS_START AND DS_END
     AND SUBSTR(s.order_code, -3) != '_PR'
     AND b.status <> 'CANCELLED'
-    AND b.driver_id IN UNNEST(V_DRIVER_IDS)
-  GROUP BY 1, 2, 3, 4, 5, 6
+    AND b.driver_id IN (SELECT driver_id FROM drivers)
+  GROUP BY 1, 2, 3, 4, 5
+),
+
+assigned_f AS (
+  SELECT a.*
+  FROM assigned a
+  JOIN drivers d
+    ON a.load_date = d.load_date
+   AND a.driver_id = d.driver_id
 ),
 
 epic AS (
   SELECT DISTINCT
-         checkpoint AS load_date,
-         CAST(driver_id AS STRING) AS driver_id,
-         order_code
-  FROM \`dw-ghn.testing.epic_recommendation_result_ops\`
-  WHERE checkpoint BETWEEN DS_START AND DS_END
-    AND CAST(driver_id AS STRING) IN UNNEST(V_DRIVER_IDS)
+         e.checkpoint AS load_date,
+         CAST(e.driver_id AS STRING) AS driver_id,
+         e.order_code
+  FROM \`dw-ghn.testing.epic_recommendation_result_ops\` e
+  JOIN drivers d
+    ON e.checkpoint = d.load_date
+   AND CAST(e.driver_id AS STRING) = d.driver_id
+  WHERE e.checkpoint BETWEEN DS_START AND DS_END
+),
+
+base AS (
+  SELECT  COALESCE(a.load_date, e.load_date) AS load_date,
+          COALESCE(a.driver_id, e.driver_id) AS driver_id,
+          COALESCE(a.order_code, e.order_code) AS order_code,
+          a.contact_address,
+          a.contact_latlng,
+          IF(e.order_code IS NOT NULL, 1, 0) AS is_epic,
+          IF(a.order_code IS NOT NULL, 1, 0) AS is_assigned
+  FROM assigned_f a
+  FULL OUTER JOIN epic e
+         ON a.load_date  = e.load_date
+        AND a.driver_id  = e.driver_id
+        AND a.order_code = e.order_code
 )
 
-SELECT  COALESCE(a.load_date, e.load_date) AS load_date,
-        COALESCE(a.driver_id, e.driver_id) AS driver_id,
-        a.driver_name,
-        COALESCE(a.order_code, e.order_code) AS order_code,
-        a.contact_address,
-        a.contact_latlng,
-        IF(e.order_code IS NOT NULL, 1, 0) AS is_epic,
-        IF(a.order_code IS NOT NULL, 1, 0) AS is_assigned
-FROM assigned a
-FULL OUTER JOIN epic e
-       ON a.load_date  = e.load_date
-      AND a.driver_id  = e.driver_id
-      AND a.order_code = e.order_code
-ORDER BY load_date, driver_id, is_epic DESC, is_assigned DESC, order_code`;
+SELECT  x.load_date,
+        d.warehouse_id,
+        d.warehouse_name,
+        x.driver_id AS employee_id,
+        d.driver_name,
+        x.order_code,
+        x.contact_address,
+        x.contact_latlng,
+        x.is_epic,
+        x.is_assigned
+FROM base x
+LEFT JOIN drivers d
+       ON x.load_date = d.load_date
+      AND x.driver_id = d.driver_id
+ORDER BY d.warehouse_id, x.driver_id, x.load_date, x.is_epic DESC, x.is_assigned DESC, x.order_code`;
 
 export default function GuideModal({ open, onClose }) {
   const [copied, setCopied] = useState(false);
@@ -95,11 +129,9 @@ export default function GuideModal({ open, onClose }) {
               Mở <a href="https://console.cloud.google.com/bigquery" target="_blank" rel="noreferrer">BigQuery Console</a> (project <b>dw-ghn</b>) → bấm <b>Compose new query</b>.
             </li>
             <li>
-              Dán query bên dưới. Sửa 2 chỗ trước khi chạy:
-              <ul>
-                <li><code>DS_START</code> / <code>DS_END</code> — khoảng ngày cần xem</li>
-                <li><code>V_DRIVER_IDS</code> — danh sách ID tài xế cần soát</li>
-              </ul>
+              Dán query bên dưới. Chỉ cần sửa <code>DS_START</code> / <code>DS_END</code> (khoảng ngày cần xem) —
+              danh sách nhân viên EPIC được lấy <b>tự động theo ngày</b> từ bảng <code>ghn-reporting.testing.epic_result</code>
+              (nhân viên có lương plan/unplanned &gt; 0), kèm sẵn bưu cục.
             </li>
             <li>Bấm <b>Run</b> → chờ kết quả → <b>Save results ▾</b> → chọn <b>CSV (local file)</b>
               &nbsp;(kết quả lớn hơn 10MB thì chọn <b>CSV (Google Drive)</b> rồi tải về).</li>
@@ -113,10 +145,11 @@ export default function GuideModal({ open, onClose }) {
           <pre className="sql">{BQ_QUERY}</pre>
 
           <div className="guide-note">
-            File CSV cần đúng các cột: <code>load_date, driver_id, order_code, contact_latlng, is_epic, is_assigned</code>
-            (query trên đã ra đúng format, kèm <code>driver_name</code> và <code>contact_address</code> để hiện tên
-            và soát sai định vị). Dữ liệu nạp bằng nút chỉ tồn tại trong phiên xem — muốn cố định cho mọi người,
-            thay file <code>public/test.csv</code> rồi <code>docker compose up -d --build</code>.
+            Query ra đúng format trang cần: <code>load_date, warehouse_id, warehouse_name, employee_id, driver_name,
+            order_code, contact_address, contact_latlng, is_epic, is_assigned</code> — group theo bưu cục, hiện tên
+            và soát sai định vị hoạt động đầy đủ. Dữ liệu nạp bằng nút chỉ tồn tại trong phiên xem — muốn cố định
+            cho mọi người, thay file <code>public/test.csv</code> rồi <code>docker compose up -d --build</code>
+            (hoặc <code>vercel --prod</code>).
           </div>
         </div>
       </div>

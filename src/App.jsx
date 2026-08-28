@@ -3,6 +3,7 @@ import * as D from "./detect.js";
 import { computeScene, NO_BC, ALL_DRV, fmtKm } from "./scene.js";
 import MapView from "./MapView.jsx";
 import GuideModal from "./GuideModal.jsx";
+import SearchSelect from "./SearchSelect.jsx";
 
 const DATA_CSV = "test.csv"; // đặt trong /public — đổi tên ở đây nếu dùng file khác
 
@@ -123,19 +124,21 @@ export default function App() {
         <div className="controls">
           <div className="ctl">
             <label>Bưu cục</label>
-            <select value={bc} onChange={e => setBc(e.target.value)}>
-              {bcs.map(b => <option key={b} value={b}>{b}</option>)}
-            </select>
+            <SearchSelect width={215} placeholder="Tìm bưu cục…"
+              options={bcs.map(b => ({ value: b, label: b }))}
+              value={bc} onChange={setBc} />
           </div>
           <div className="ctl">
             <label>Tài xế</label>
-            <select value={driver} onChange={e => setDriver(e.target.value)}>
-              <option value={ALL_DRV}>— Cả bưu cục ({bcDrivers.length} tài xế) —</option>
-              {bcDrivers.map(d => {
-                const info = driverInfo[d];
-                return <option key={d} value={d}>{d + (info && info.name ? " — " + info.name : "")}</option>;
-              })}
-            </select>
+            <SearchSelect width={250} placeholder="Tìm theo tên hoặc ID…"
+              options={[
+                { value: ALL_DRV, label: `— Cả bưu cục (${bcDrivers.length} tài xế) —` },
+                ...bcDrivers.map(d => {
+                  const info = driverInfo[d];
+                  return { value: d, label: d + (info && info.name ? " — " + info.name : "") };
+                }),
+              ]}
+              value={driver} onChange={setDriver} />
           </div>
           <div className="ctl">
             <label>Ngày</label>
