@@ -240,9 +240,24 @@ for (const w of writes) {
 console.log(`   🗑️  Quá hạn : ${expired.length ? expired.join(", ") : "(không có)"}` +
   ` — giữ ${keepDays === Infinity ? "tất cả" : keepDays + " ngày gần nhất"}`);
 
-if (!writes.length && !expired.length && fs.existsSync(MANIFEST)) {
+/* manifest phải khớp thực tế trên đĩa: người dùng có thể đã thêm/bớt file ngày bằng tay,
+   hoặc đổi --keep-days. Chỉ thoát sớm khi mọi thứ đã đúng — nếu không sẽ để lại manifest
+   trỏ tới ngày không còn tồn tại và app fetch 404. */
+let currentManifest = null;
+try { currentManifest = JSON.parse(fs.readFileSync(MANIFEST, "utf8")); } catch { /* thiếu hoặc hỏng */ }
+const expectDates = allDates.filter((d) => keepSet.has(d));
+const wantKeepDays = keepDays === Infinity ? null : keepDays;
+const manifestStale =
+  !currentManifest ||
+  JSON.stringify(currentManifest.dates) !== JSON.stringify(expectDates) ||
+  (currentManifest.keep_days ?? null) !== wantKeepDays;
+
+if (!writes.length && !expired.length && !manifestStale) {
   console.log("\n✅ Không có gì thay đổi.\n");
   process.exit(0);
+}
+if (!writes.length && !expired.length && manifestStale) {
+  console.log("   ♻️  manifest.json lệch với file thực tế — ghi lại.");
 }
 
 if (dryRun) {

@@ -109,10 +109,43 @@ Tuỳ chọn: `--dry-run`, `<duong-dan.csv>`, `--downloads <thu-muc>`, `--keep-d
 > `scripts/bq_daily.sql` và `BQ_QUERY` trong `GuideModal.jsx` là cùng một query,
 > chỉ khác 2 dòng `DECLARE`: file SQL lấy D-1 tự động, GuideModal để người dùng tự điền ngày.
 
-Việc này cũng chạy tự động qua scheduled task của Claude lúc **10h sáng hàng ngày**
-(mở BigQuery bằng Chrome, tải CSV, chạy `append-data.mjs`), rồi báo qua push notification.
-Task **không** deploy và **không** commit: sandbox chạy task không có `vercel` CLI và bị chặn
-mạng tới vercel.com, nên `docker compose up -d --build` + `vercel --prod` vẫn phải chạy tay.
+### Chạy tự động hàng ngày
+
+Hai mắt xích, chạy trên hai máy khác nhau:
+
+| Giờ | Ai chạy | Làm gì |
+| --- | --- | --- |
+| 10:00 | Scheduled task của Claude (sandbox + Chrome trên máy này) | Mở BigQuery, chạy `bq_daily.sql`, tải CSV, `append-data.mjs` → `public/data/` |
+| 10:15 | Windows Task Scheduler (máy này) | `daily-deploy.ps1`: kiểm tra manifest đã có D-1 chưa → `docker compose up -d --build` → `vercel --prod` |
+
+Phải tách làm hai vì sandbox của Claude không tới được `vercel.com`/`api.vercel.com`
+(allowlist chỉ mở npm và github) và cũng không có credential Vercel — token đăng nhập
+nằm trong profile Windows.
+
+**Đăng ký một lần:**
+
+```powershell
+cd C:\Users\khanhhnd\Desktop\detect_EPIC
+powershell -ExecutionPolicy Bypass -File .\scripts\register-deploy-task.ps1
+```
+
+Script kiểm tra sẵn `vercel` / `npx` / `docker` / `manifest.json` / `.vercel/project.json`
+và cảnh báo ngay lúc đăng ký, thay vì để fail âm thầm lúc 10h15 sáng mai.
+
+| Việc | Lệnh |
+| --- | --- |
+| Chạy thử ngay | `Start-ScheduledTask -TaskName 'EPIC Order Map - daily deploy'` |
+| Deploy tay | `.\scripts\daily-deploy.ps1` |
+| Deploy dù data chưa mới | `.\scripts\daily-deploy.ps1 -Force` |
+| Đổi giờ | `.\scripts\register-deploy-task.ps1 -At 11:00` |
+| Gỡ bỏ | `.\scripts\register-deploy-task.ps1 -Unregister` |
+
+Log ở `logs/deploy-<ngày>.log`, giữ 30 file gần nhất.
+
+`daily-deploy.ps1` **bỏ qua deploy** nếu ngày mới nhất trong `manifest.json` không phải D-1
+— tức là khi task 10h fail thì bản production giữ nguyên data cũ thay vì bị deploy đè bằng
+chính data cũ đó. Điều kiện: máy bật và đã đăng nhập (Docker Desktop lẫn vercel CLI đều cần
+session của user).
 
 ## Sự cố đã biết
 

@@ -31,7 +31,13 @@ cũng là chế độ nút "Nạp CSV khác…" dùng.
 ngày quá hạn được `mv` sang `data_archive/` chứ không xoá, và `npm run build` phải chạy ngoài mount
 vì vite `emptyOutDir` cần unlink.
 
-Một scheduled task chạy 10h sáng hàng ngày làm trọn flow này qua Chrome; nó không deploy và không commit (sandbox của task không có `vercel` CLI và bị chặn mạng tới vercel.com).
+**Tự động hoá chia hai mắt xích, hai máy.** 10:00 — scheduled task của Claude (Chrome + sandbox) lấy
+data và chạy `append-data.mjs`; nó KHÔNG deploy và KHÔNG commit. 10:15 — Windows Task Scheduler chạy
+`scripts/daily-deploy.ps1` trên chính máy user: gate theo `manifest.json` (bỏ qua nếu ngày mới nhất
+không phải D-1), rồi `docker compose up -d --build` + `vercel --prod`. Đăng ký một lần bằng
+`scripts/register-deploy-task.ps1`. Lý do phải tách: sandbox chỉ ra được npm + github,
+`vercel.com`/`api.vercel.com` bị chặn, và credential Vercel nằm trong profile Windows chứ không
+phải `.vercel/` trong repo (file đó chỉ có projectId/orgId).
 
 There is no test suite or linter. Verification is done by hand: Node scripts that import `src/detect.js` / `src/scene.js` directly (pure ESM, zero deps), and headless-Chrome checks via `playwright-core` (`chromium.launch({ channel: "chrome" })`) against localhost:8080.
 

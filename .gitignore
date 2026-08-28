@@ -6,3 +6,4 @@ dist
 .env*
 data_archive
 _to_delete
+logs
