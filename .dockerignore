@@ -4,3 +4,5 @@ dist
 .git
 EPIC
 *.md
+data_archive
+_to_delete

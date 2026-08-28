@@ -4,3 +4,5 @@ dist
 
 .vercel
 .env*
+data_archive
+_to_delete

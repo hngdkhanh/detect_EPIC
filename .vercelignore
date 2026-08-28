@@ -6,3 +6,6 @@ Dockerfile
 docker-compose.yml
 nginx.conf
 .dockerignore
+data_archive
+_to_delete
+scripts

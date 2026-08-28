@@ -80,6 +80,40 @@ header h1 .sub { color: var(--muted); font-weight: 400; font-size: 12px; margin-
 .ss-item.sel { font-weight: 650; color: var(--accent); }
 .ss-empty { padding: 10px; font-size: 12px; color: var(--muted); }
 
+/* ---- nút + panel "🚨 Bất thường" trên navbar ---- */
+.abn-wrap { position: relative; }
+.abn-btn { white-space: nowrap; }
+.abn-btn.has {
+  background: #fdeaea; border-color: #e5a3a3; color: #b02a2a; font-weight: 650;
+}
+.abn-btn.has:hover { background: #fbdcdc; }
+.abn-pop {
+  /* toạ độ top/left/width do App.jsx tính lúc mở — kẹp trong viewport */
+  position: fixed; z-index: 1600;
+  max-height: min(480px, 70vh);
+  background: var(--surface); border: 1px solid var(--hairline); border-radius: 10px;
+  box-shadow: 0 10px 32px rgba(0,0,0,.18);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.abn-head { padding: 10px 13px 3px; font-size: 13px; font-weight: 700; }
+.abn-note {
+  padding: 0 13px 9px; font-size: 11px; color: var(--muted); line-height: 1.5;
+  border-bottom: 1px solid var(--hairline);
+}
+.abn-list { overflow-y: auto; }
+.abn-row {
+  display: flex; align-items: center; gap: 10px; padding: 8px 13px;
+  cursor: pointer; border-bottom: 1px solid var(--page);
+}
+.abn-row:hover { background: var(--page); }
+.abn-info { min-width: 0; }
+.abn-nm { font-size: 12.5px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.abn-sub { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.abn-stats { margin-left: auto; text-align: right; flex-shrink: 0; }
+.abn-far { display: block; font-size: 12.5px; font-weight: 700; color: #d03b3b; font-variant-numeric: tabular-nums; }
+.abn-pct { display: block; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.abn-empty { padding: 18px; text-align: center; font-size: 12px; color: var(--muted); }
+
 .autobox {
   font-size: 12.5px; color: var(--ink-2); cursor: pointer; user-select: none;
   border: 1px solid var(--hairline); border-radius: 6px; padding: 4px 10px; background: var(--surface);
@@ -271,3 +305,20 @@ tbody tr.active { background: #fdf0f0; }
 .leaflet-popup-content { font: 12.5px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
 .leaflet-popup-content b { font-weight: 650; }
 .leaflet-container { font: inherit; }
+
+/* báo lỗi khi không tải được CSV của ngày đang chọn */
+.data-err {
+  margin: 0 12px 8px;
+  padding: 8px 12px;
+  border: 1px solid #e0b4b4;
+  border-left: 4px solid #c0392b;
+  border-radius: 6px;
+  background: #fdf3f2;
+  color: #7b241c;
+  font-size: 13px;
+}
+.data-err code {
+  background: rgba(0, 0, 0, .06);
+  padding: 1px 4px;
+  border-radius: 3px;
+}

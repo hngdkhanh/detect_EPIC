@@ -1,15 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as D from "./detect.js";
-import { computeScene, NO_BC, ALL_DRV, fmtKm } from "./scene.js";
+import { computeScene, groupByDriver, evalAbnormal, NO_BC, ALL_DRV, fmtKm } from "./scene.js";
 import MapView from "./MapView.jsx";
 import GuideModal from "./GuideModal.jsx";
 import SearchSelect from "./SearchSelect.jsx";
 
-const DATA_CSV = "test.csv"; // đặt trong /public — đổi tên ở đây nếu dùng file khác
+/* Dữ liệu tách theo ngày trong /public/data — app chỉ tải file của ngày đang chọn.
+   manifest.json liệt kê các ngày có sẵn; thiếu nó thì rơi về file gộp cũ (LEGACY_CSV). */
+const MANIFEST_URL = "data/manifest.json";
+const dayUrl = d => `data/${d}.csv`;
+const LEGACY_CSV = "test.csv";
+const DAY_CACHE_MAX = 3; // số ngày giữ trong RAM
 
 export default function App() {
   const [orders, setOrders] = useState([]);
   const [driverCsv, setDriverCsv] = useState(null);
+  const [manifestDates, setManifestDates] = useState([]);
+  const [perDay, setPerDay] = useState(false); // true = đang chạy chế độ tách theo ngày
+  const [loadingDay, setLoadingDay] = useState(false);
+  const [dataErr, setDataErr] = useState(null);
+  const dayCache = useRef(new Map());
   const [bc, setBc] = useState("");
   const [driver, setDriver] = useState(ALL_DRV);
   const [date, setDate] = useState("");
@@ -22,18 +32,54 @@ export default function App() {
   const [toggles, setToggles] = useState({ hull: true, order: true, far: true });
   const [activeCode, setActiveCode] = useState(null);
   const [showGuide, setShowGuide] = useState(false);
+  const [showAbn, setShowAbn] = useState(false);
   const mapApi = useRef(null);
+  const abnRef = useRef(null);
 
-  /* ---- nạp dữ liệu ban đầu từ /public ---- */
+  /* ---- nạp manifest + drivers.csv, rồi tải ngày mới nhất ---- */
   useEffect(() => {
     Promise.all([
-      fetch(DATA_CSV).then(r => (r.ok ? r.text() : null)).catch(() => null),
+      fetch(MANIFEST_URL).then(r => (r.ok ? r.json() : null)).catch(() => null),
       fetch("drivers.csv").then(r => (r.ok ? r.text() : null)).catch(() => null),
-    ]).then(([csv, drv]) => {
+    ]).then(([man, drv]) => {
       setDriverCsv(drv);
-      if (csv) setOrders(D.loadOrders(csv));
+      const ds = man && Array.isArray(man.dates) ? man.dates.slice().sort() : null;
+      if (ds && ds.length) {
+        setManifestDates(ds);
+        setPerDay(true);
+        setDate(ds[ds.length - 1]); // mặc định ngày mới nhất
+        return;
+      }
+      // không có manifest → file gộp cũ, giữ nguyên hành vi cũ
+      fetch(LEGACY_CSV).then(r => (r.ok ? r.text() : null)).catch(() => null)
+        .then(csv => { if (csv) setOrders(D.loadOrders(csv)); });
     });
   }, []);
+
+  /* ---- tải CSV của ngày đang chọn (chỉ ở chế độ tách ngày) ----
+     KHÔNG xoá orders cũ trong lúc tải: danh sách BC / tài xế phải còn nguyên,
+     nếu không select tài xế sẽ tự nhảy về "cả bưu cục" mỗi lần đổi ngày. */
+  useEffect(() => {
+    if (!perDay || !date) return;
+    const cached = dayCache.current.get(date);
+    if (cached) { setOrders(cached); return; }
+    let cancelled = false;
+    setLoadingDay(true);
+    setDataErr(null);
+    fetch(dayUrl(date))
+      .then(r => (r.ok ? r.text() : Promise.reject(new Error("HTTP " + r.status))))
+      .then(txt => {
+        if (cancelled) return;
+        const next = D.loadOrders(txt);
+        const c = dayCache.current;
+        c.set(date, next);
+        for (const k of [...c.keys()]) { if (c.size <= DAY_CACHE_MAX) break; if (k !== date) c.delete(k); }
+        setOrders(next);
+      })
+      .catch(err => { if (!cancelled) setDataErr(`Không tải được dữ liệu ngày ${date} (${err.message}).`); })
+      .finally(() => { if (!cancelled) setLoadingDay(false); });
+    return () => { cancelled = true; };
+  }, [perDay, date]);
 
   const driverInfo = useMemo(() => D.buildDriverInfo(orders, driverCsv), [orders, driverCsv]);
   const bcOf = id => (driverInfo[id] && driverInfo[id].bc) || NO_BC;
@@ -48,14 +94,76 @@ export default function App() {
 
   const drvIds = driver === ALL_DRV ? bcDrivers : [driver];
   const drvKey = drvIds.join(",");
-  const dates = useMemo(() => {
+  const derivedDates = useMemo(() => {
     const set = new Set(drvIds);
     return [...new Set(orders.filter(o => set.has(o.driver)).map(o => o.date))].sort();
   }, [orders, drvKey]);
-  useEffect(() => { if (dates.length && !dates.includes(date)) setDate(dates[0]); }, [dates]);
+  const dates = perDay ? manifestDates : derivedDates;
+  useEffect(() => {
+    if (dates.length && !dates.includes(date)) setDate(perDay ? dates[dates.length - 1] : dates[0]);
+  }, [dates, perDay]);
 
   // đổi phạm vi xem → bỏ hết tick
   useEffect(() => { setFocused(new Set()); setActiveCode(null); }, [bc, driver, date]);
+
+  /* ---- quét bất thường toàn dữ liệu (mọi bưu cục) theo ngày đang chọn ----
+     chạy NGOÀI render, theo lô ~30ms rồi nhả main thread — file lớn (nghìn tài xế)
+     không làm đơ UI mỗi lần đổi ngày / nạp CSV. */
+  const [abnormal, setAbnormal] = useState([]);
+  const [abnBusy, setAbnBusy] = useState(false);
+  useEffect(() => {
+    if (!orders.length || !date) { setAbnormal([]); setAbnBusy(false); return; }
+    let cancelled = false;
+    setAbnBusy(true);
+    const entries = [...groupByDriver(orders, date)];
+    const rows = [];
+    let i = 0;
+    function step() {
+      if (cancelled) return;
+      const t0 = performance.now();
+      while (i < entries.length && performance.now() - t0 < 30) {
+        const [id, dOrders] = entries[i++];
+        const r = evalAbnormal(dOrders);
+        if (r && r.far >= 5 && r.ratio >= 0.10) {
+          const info = driverInfo[id] || {};
+          rows.push({ id, name: info.name || String(id), bc: info.bc || NO_BC, ...r });
+        }
+      }
+      if (i < entries.length) setTimeout(step, 0);
+      else {
+        rows.sort((a, b) => b.far - a.far || b.ratio - a.ratio);
+        setAbnormal(rows);
+        setAbnBusy(false);
+      }
+    }
+    step();
+    return () => { cancelled = true; };
+  }, [orders, date, driverInfo]);
+
+  const [abnPos, setAbnPos] = useState(null);
+  function placeAbn() {
+    const btn = abnRef.current && abnRef.current.querySelector(".abn-btn");
+    if (!btn) return;
+    const r = btn.getBoundingClientRect();
+    const w = Math.min(400, window.innerWidth - 24);
+    // kẹp trong viewport — nút có thể nằm sát mép phải khi navbar xuống dòng
+    setAbnPos({ top: r.bottom + 6, left: Math.min(Math.max(12, r.left), window.innerWidth - w - 12), width: w });
+  }
+  useEffect(() => {
+    if (!showAbn) return;
+    const onDoc = e => { if (abnRef.current && !abnRef.current.contains(e.target)) setShowAbn(false); };
+    document.addEventListener("mousedown", onDoc);
+    window.addEventListener("resize", placeAbn);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      window.removeEventListener("resize", placeAbn);
+    };
+  }, [showAbn]);
+  function gotoAbnormal(row) {
+    setBc(row.bc);
+    setDriver(row.id);
+    setShowAbn(false);
+  }
 
   /* ---- tính toàn cảnh ---- */
   const scene = useMemo(
@@ -92,6 +200,10 @@ export default function App() {
       try {
         const next = D.loadOrders(reader.result);
         if (!next.length) { alert("Không đọc được dòng dữ liệu hợp lệ nào trong file CSV."); return; }
+        setPerDay(false);   // file người dùng nạp tay: ngày suy ra từ chính file đó
+        setManifestDates([]);
+        setDataErr(null);
+        dayCache.current.clear();
         setOrders(next);
       } catch (err) { alert("Lỗi đọc CSV: " + err.message); }
     };
@@ -141,8 +253,8 @@ export default function App() {
               value={driver} onChange={setDriver} />
           </div>
           <div className="ctl">
-            <label>Ngày</label>
-            <select value={date} onChange={e => setDate(e.target.value)}>
+            <label>Ngày{loadingDay ? " — đang tải…" : ""}</label>
+            <select value={date} onChange={e => setDate(e.target.value)} disabled={loadingDay}>
               {dates.map(d => <option key={d} value={d}>{d}</option>)}
             </select>
           </div>
@@ -165,6 +277,41 @@ export default function App() {
             <input type="range" min="0.2" max="3" step="0.1" value={minKm} disabled={auto} onChange={e => setMinKm(+e.target.value)} />
             <span className="val">{auto ? "1.0 km" : minKm.toFixed(1) + " km"}</span>
           </div>
+          <div className="abn-wrap" ref={abnRef}>
+            <button className={"filebtn abn-btn" + (abnormal.length ? " has" : "")}
+              title="Tài xế có đơn xa vùng EPIC ≥ 10% tổng đơn gán thực tế (và ≥ 5 đơn) — quét toàn bộ bưu cục trong dữ liệu"
+              onClick={() => { placeAbn(); setShowAbn(s => !s); }}>
+              🚨 Bất thường: {abnBusy ? "…" : abnormal.length}
+            </button>
+            {showAbn && abnPos && (
+              <div className="abn-pop" style={{ top: abnPos.top, left: abnPos.left, width: abnPos.width }}>
+                <div className="abn-head">Tài xế gán ngoài bất thường{date ? ` — ${date}` : ""}</div>
+                <div className="abn-note">
+                  Quét <b>toàn bộ bưu cục</b> trong dữ liệu, tham số tự đề xuất theo từng tài xế.
+                  Tiêu chí: đơn <b>XA vùng EPIC ≥ 10%</b> tổng đơn gán thực tế <b>và ≥ 5 đơn</b> (đã
+                  loại đơn sai định vị). Bấm vào tài xế để mở xem trên bản đồ.
+                </div>
+                <div className="abn-list">
+                  {abnormal.map(r => (
+                    <div className="abn-row" key={r.id} onClick={() => gotoAbnormal(r)}>
+                      <div className="abn-info">
+                        <div className="abn-nm">{r.name}</div>
+                        <div className="abn-sub">ID {r.id} · {r.bc}</div>
+                      </div>
+                      <div className="abn-stats">
+                        <span className="abn-far">⚠ {r.far} / {r.assigned} đơn</span>
+                        <span className="abn-pct">{Math.round(r.ratio * 100)}% đơn gán
+                          {r.maybe > 0 && <> · ❓ {r.maybe} nghi sai định vị</>}</span>
+                      </div>
+                    </div>
+                  ))}
+                  {!abnormal.length && (
+                    <div className="abn-empty">{abnBusy ? "Đang quét…" : "Không có tài xế nào vượt ngưỡng 🎉"}</div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
           <label className="filebtn">Nạp CSV khác…
             <input type="file" accept=".csv" style={{ display: "none" }} onChange={onUpload} />
           </label>
@@ -173,6 +320,12 @@ export default function App() {
       </header>
 
       <GuideModal open={showGuide} onClose={() => setShowGuide(false)} />
+
+      {dataErr && (
+        <div className="data-err" role="alert">
+          ⚠️ {dataErr} Kiểm tra <code>public/data/</code> và <code>manifest.json</code>, hoặc chạy lại <code>npm run append:data</code>.
+        </div>
+      )}
 
       <main>
         <div id="mapwrap">

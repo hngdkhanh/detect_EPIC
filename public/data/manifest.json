@@ -1,0 +1,32 @@
+{
+  "generated_at": "2026-08-28T09:52:30.102Z",
+  "keep_days": 14,
+  "columns": [
+    "load_date",
+    "warehouse_id",
+    "warehouse_name",
+    "employee_id",
+    "driver_name",
+    "order_code",
+    "contact_address",
+    "contact_latlng",
+    "is_epic",
+    "is_assigned"
+  ],
+  "days": [
+    {
+      "date": "2026-08-25",
+      "rows": 16069,
+      "bytes": 3050358
+    },
+    {
+      "date": "2026-08-27",
+      "rows": 17845,
+      "bytes": 3334990
+    }
+  ],
+  "dates": [
+    "2026-08-25",
+    "2026-08-27"
+  ]
+}

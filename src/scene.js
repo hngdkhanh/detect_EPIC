@@ -27,6 +27,53 @@ const KIND_LABEL = {
   misgeo: "🟣 Sai định vị — đơn thực tế thuộc địa bàn trung tâm",
 };
 
+/* Quét TOÀN BỘ dữ liệu đã nhập (mọi bưu cục) trong 1 ngày, tìm tài xế có dấu hiệu
+   gán-ngoài bất thường: số đơn XA vùng EPIC (sau soát địa chỉ, gồm cả đơn "❓ có thể
+   sai định vị") vừa ≥ minFar đơn, vừa ≥ pct × tổng đơn gán thực tế.
+   Ngưỡng kép để tài xế ít đơn (3 đơn, 1 xa = 33%) không bị báo oan.
+   Luôn dùng tham số tự đề xuất theo từng tài xế — giống chế độ mặc định của trang. */
+export function groupByDriver(orders, date) {
+  const byDrv = new Map();
+  for (const o of orders) {
+    if (o.date !== date) continue;
+    let arr = byDrv.get(o.driver);
+    if (!arr) byDrv.set(o.driver, (arr = []));
+    arr.push(o);
+  }
+  return byDrv;
+}
+
+/* Chấm 1 tài xế: đếm đơn xa sau soát địa chỉ (loại verdict A, giữ B) — đúng như computeScene.
+   Trả null nếu không đánh giá được (không có đơn gán hoặc không có điểm EPIC). */
+export function evalAbnormal(dOrders) {
+  const assigned = dOrders.filter(o => o.assigned).length;
+  if (!assigned || !dOrders.some(o => o.epic && o.hasCoord)) return null;
+  const det = D.detect(dOrders, D.suggestParams(dOrders));
+  const centerProfile = D.buildCenterProfile(
+    dOrders.filter(o => o.epic).concat(det.results.filter(r => !r.far).map(r => r.order)));
+  let far = 0, maybe = 0;
+  for (const r of det.results) {
+    if (!r.far) continue;
+    const v = D.addrVerdict(r.order, centerProfile);
+    if (v === "A") continue; // sai định vị chắc chắn → không tính (đơn thực tế trong địa bàn)
+    far++;
+    if (v === "B") maybe++;
+  }
+  return { far, maybe, assigned, ratio: far / assigned };
+}
+
+export function scanAbnormal(orders, date, driverInfo, { pct = 0.10, minFar = 5 } = {}) {
+  const rows = [];
+  for (const [id, dOrders] of groupByDriver(orders, date)) {
+    const r = evalAbnormal(dOrders);
+    if (!r || r.far < minFar || r.ratio < pct) continue;
+    const info = driverInfo[id] || {};
+    rows.push({ id, name: info.name || String(id), bc: info.bc || NO_BC, ...r });
+  }
+  rows.sort((a, b) => b.far - a.far || b.ratio - a.ratio);
+  return rows;
+}
+
 export function computeScene({ orders, drvIds, date, eps, k, minKm, driverInfo, auto }) {
   const drvSet = new Set(drvIds);
   const dayOrders = orders.filter(o => drvSet.has(o.driver) && o.date === date);
