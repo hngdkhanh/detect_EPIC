@@ -33,8 +33,10 @@ export default function App() {
   const [activeCode, setActiveCode] = useState(null);
   const [showGuide, setShowGuide] = useState(false);
   const [showAbn, setShowAbn] = useState(false);
+  const [showCfg, setShowCfg] = useState(false); // dropdown tham số — chỉ mở khi cần chỉnh
   const mapApi = useRef(null);
   const abnRef = useRef(null);
+  const cfgRef = useRef(null);
 
   /* ---- nạp manifest + drivers.csv, rồi tải ngày mới nhất ---- */
   useEffect(() => {
@@ -159,6 +161,12 @@ export default function App() {
       window.removeEventListener("resize", placeAbn);
     };
   }, [showAbn]);
+  useEffect(() => {
+    if (!showCfg) return;
+    const onDoc = e => { if (cfgRef.current && !cfgRef.current.contains(e.target)) setShowCfg(false); };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [showCfg]);
   function gotoAbnormal(row) {
     setBc(row.bc);
     setDriver(row.id);
@@ -258,24 +266,35 @@ export default function App() {
               {dates.map(d => <option key={d} value={d}>{d}</option>)}
             </select>
           </div>
-          <label className="ctl autobox" title="Tính eps riêng cho từng tài xế theo mật độ điểm EPIC (P90 láng giềng); k=3, sàn 1km theo backtest">
-            <input type="checkbox" checked={auto} onChange={e => setAuto(e.target.checked)} />
-            Tự đề xuất tham số
-          </label>
-          <div className={"ctl" + (auto ? " dim" : "")}>
-            <label>DBSCAN eps</label>
-            <input type="range" min="100" max="1000" step="50" value={eps} disabled={auto} onChange={e => setEps(+e.target.value)} />
-            <span className="val">{auto ? "auto" : eps + " m"}</span>
-          </div>
-          <div className={"ctl" + (auto ? " dim" : "")}>
-            <label>Hệ số k</label>
-            <input type="range" min="1" max="6" step="0.5" value={k} disabled={auto} onChange={e => setK(+e.target.value)} />
-            <span className="val">{auto ? "3.0×" : k.toFixed(1) + "×"}</span>
-          </div>
-          <div className={"ctl" + (auto ? " dim" : "")}>
-            <label>Ngưỡng tối thiểu</label>
-            <input type="range" min="0.2" max="3" step="0.1" value={minKm} disabled={auto} onChange={e => setMinKm(+e.target.value)} />
-            <span className="val">{auto ? "1.0 km" : minKm.toFixed(1) + " km"}</span>
+          <div className="cfg-wrap" ref={cfgRef}>
+            <button className={"filebtn cfg-btn" + (auto ? "" : " custom")}
+              title="Tham số thuật toán phát hiện đơn xa — mặc định tự đề xuất theo từng tài xế, chỉ mở khi cần chỉnh"
+              onClick={() => setShowCfg(s => !s)}>
+              ⚙ Tham số: {auto ? "tự đề xuất" : "tuỳ chỉnh"}
+            </button>
+            {showCfg && (
+              <div className="cfg-pop">
+                <label className="autobox" title="Tính eps riêng cho từng tài xế theo mật độ điểm EPIC (P90 láng giềng); k=3, sàn 1km theo backtest">
+                  <input type="checkbox" checked={auto} onChange={e => setAuto(e.target.checked)} />
+                  Tự đề xuất tham số theo từng tài xế
+                </label>
+                <div className={"ctl" + (auto ? " dim" : "")}>
+                  <label>DBSCAN eps</label>
+                  <input type="range" min="100" max="1000" step="50" value={eps} disabled={auto} onChange={e => setEps(+e.target.value)} />
+                  <span className="val">{auto ? "auto" : eps + " m"}</span>
+                </div>
+                <div className={"ctl" + (auto ? " dim" : "")}>
+                  <label>Hệ số k</label>
+                  <input type="range" min="1" max="6" step="0.5" value={k} disabled={auto} onChange={e => setK(+e.target.value)} />
+                  <span className="val">{auto ? "3.0×" : k.toFixed(1) + "×"}</span>
+                </div>
+                <div className={"ctl" + (auto ? " dim" : "")}>
+                  <label>Ngưỡng tối thiểu</label>
+                  <input type="range" min="0.2" max="3" step="0.1" value={minKm} disabled={auto} onChange={e => setMinKm(+e.target.value)} />
+                  <span className="val">{auto ? "1.0 km" : minKm.toFixed(1) + " km"}</span>
+                </div>
+              </div>
+            )}
           </div>
           <div className="abn-wrap" ref={abnRef}>
             <button className={"filebtn abn-btn" + (abnormal.length ? " has" : "")}
