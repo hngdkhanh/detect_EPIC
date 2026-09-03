@@ -44,22 +44,42 @@ export function groupByDriver(orders, date) {
 }
 
 /* Chấm 1 tài xế: đếm đơn xa sau soát địa chỉ (loại verdict A, giữ B) — đúng như computeScene.
-   Trả null nếu không đánh giá được (không có đơn gán hoặc không có điểm EPIC). */
+   Trả null nếu không đánh giá được (không có đơn gán hoặc không có điểm EPIC).
+   Ngoài far/maybe/assigned/ratio (tiêu chí bất thường) còn kèm các chỉ số phụ mà trang
+   báo cáo tổng hợp dùng (tuân thủ gợi ý, đơn ngoài, sai định vị, phân bố khoảng cách…). */
 export function evalAbnormal(dOrders) {
   const assigned = dOrders.filter(o => o.assigned).length;
   if (!assigned || !dOrders.some(o => o.epic && o.hasCoord)) return null;
-  const det = D.detect(dOrders, D.suggestParams(dOrders));
+  const params = D.suggestParams(dOrders);
+  const det = D.detect(dOrders, params);
   const centerProfile = D.buildCenterProfile(
     dOrders.filter(o => o.epic).concat(det.results.filter(r => !r.far).map(r => r.order)));
-  let far = 0, maybe = 0;
+  let far = 0, maybe = 0, misgeo = 0;
+  const farDists = [];
   for (const r of det.results) {
     if (!r.far) continue;
     const v = D.addrVerdict(r.order, centerProfile);
-    if (v === "A") continue; // sai định vị chắc chắn → không tính (đơn thực tế trong địa bàn)
+    if (v === "A") { misgeo++; continue; } // sai định vị chắc chắn → không tính (đơn thực tế trong địa bàn)
     far++;
     if (v === "B") maybe++;
+    farDists.push(r.dist);
   }
-  return { far, maybe, assigned, ratio: far / assigned };
+  farDists.sort((a, b) => a - b);
+  let epicTotal = 0, epicAssigned = 0, outside = 0, noCoord = 0, removed = 0;
+  for (const o of dOrders) {
+    if (o.epic) { epicTotal++; if (o.assigned) epicAssigned++; else removed++; }
+    else if (o.assigned) outside++;
+    if (!o.hasCoord) noCoord++;
+  }
+  return {
+    far, maybe, assigned, ratio: far / assigned,
+    misgeo, epicTotal, epicAssigned, removed, outside, noCoord,
+    allNoise: det.allNoise, eps: params.epsMeters, threshold: det.threshold,
+    farDists,
+    maxDist: farDists.length ? farDists[farDists.length - 1] : 0,
+    medDist: farDists.length ? D.percentile(farDists, 0.5) : 0,
+    far3km: farDists.filter(d => d >= 3000).length,
+  };
 }
 
 export function scanAbnormal(orders, date, driverInfo, { pct = 0.10, minFar = 5 } = {}) {
