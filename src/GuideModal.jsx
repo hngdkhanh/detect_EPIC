@@ -30,6 +30,7 @@ assigned AS (
     AND DATE(COALESCE(s.updated_time, s.created_time)) BETWEEN DS_START AND DS_END
     AND SUBSTR(s.order_code, -3) != '_PR'
     AND b.status <> 'CANCELLED'
+    AND s.type IN ('DELIVER')
     AND b.driver_id IN (SELECT driver_id FROM drivers)
   GROUP BY 1, 2, 3, 4, 5
 ),

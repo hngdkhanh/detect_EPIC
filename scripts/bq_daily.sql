@@ -1,7 +1,9 @@
--- bq_daily.sql — query lấy data D-1 cho public/test.csv
--- Chạy trên BigQuery console, project dw-ghn:
+-- bq_daily.sql — query lấy data D-1 cho public/data/<date>.csv
+--
+-- Tự động: scripts/fetch-daily.mjs đọc file này, THAY 2 dòng DECLARE bên dưới bằng ngày cụ thể
+-- (các dòng bắt đầu bằng DECLARE và -- bị bỏ), rồi chạy qua `bq` CLI. Giữ tên DS_START / DS_END.
+-- Tay: chạy trên BigQuery console, project dw-ghn, Save results -> CSV, rồi `npm run append:data`.
 --   https://console.cloud.google.com/bigquery?project=dw-ghn
--- Sau khi chạy: Save results -> Local download -> CSV, rồi `npm run append:data`.
 --
 -- Bản này khác BQ_QUERY trong src/GuideModal.jsx đúng 2 dòng DECLARE:
 -- ở đây ngày tự động là hôm qua, GuideModal để người dùng tự điền ngày.
@@ -36,6 +38,7 @@ assigned AS (
     AND DATE(COALESCE(s.updated_time, s.created_time)) BETWEEN DS_START AND DS_END
     AND SUBSTR(s.order_code, -3) != '_PR'
     AND b.status <> 'CANCELLED'
+    AND s.type IN ('DELIVER')
     AND b.driver_id IN (SELECT driver_id FROM drivers)
   GROUP BY 1, 2, 3, 4, 5
 ),

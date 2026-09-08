@@ -1,14 +1,14 @@
-<#
+﻿<#
 .SYNOPSIS
   Dang ky Windows Scheduled Task chay daily-deploy.ps1 hang ngay. Chay MOT LAN roi thoi.
 
 .DESCRIPTION
-  Task chay luc 10:15 sang, tuc 15 phut sau khi scheduled task cua Claude ghi data D-1
-  vao public/data/. Chi chay khi user dang dang nhap (Docker Desktop va vercel CLI
-  deu can session cua user).
+  Task chay luc 10:00 sang: lay data D-1 tu BigQuery (bq CLI) -> append -> docker -> vercel,
+  tat ca trong daily-deploy.ps1. Chi chay khi user dang dang nhap (gcloud, Docker Desktop
+  va vercel CLI deu can session cua user).
 
 .PARAMETER At
-  Gio chay, mac dinh 10:15.
+  Gio chay, mac dinh 10:00.
 
 .PARAMETER Unregister
   Xoa task da dang ky.
@@ -20,7 +20,7 @@
 #>
 [CmdletBinding()]
 param(
-  [string]$At = '10:15',
+  [string]$At = '10:00',
   [switch]$Unregister
 )
 
@@ -41,9 +41,19 @@ if ($Unregister) {
 
 if (-not (Test-Path $script)) { throw "Khong thay $script" }
 
-# kiem tra dieu kien truoc, de loi hien ra bay gio chu khong phai 10h15 sang mai
+# kiem tra dieu kien truoc, de loi hien ra bay gio chu khong phai 10h sang mai
 Write-Host "Kiem tra moi truong..." -ForegroundColor Cyan
 $warn = @()
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) { throw "Khong thay 'node' tren PATH. Cai Node.js truoc." }
+$bq = Get-Command bq.cmd -ErrorAction SilentlyContinue
+if (-not $bq) {
+  $bqCands = @("$env:LOCALAPPDATA\Google\Cloud SDK\google-cloud-sdk\bin\bq.cmd",
+               "C:\Program Files (x86)\Google\Cloud SDK\google-cloud-sdk\bin\bq.cmd",
+               "C:\Program Files\Google\Cloud SDK\google-cloud-sdk\bin\bq.cmd")
+  if (-not ($bqCands | Where-Object { Test-Path $_ })) {
+    $warn += "Chua thay Google Cloud SDK (bq) — buoc lay data se fail. Cai: https://cloud.google.com/sdk/docs/install, roi 'gcloud auth login'."
+  }
+}
 if (-not (Get-Command vercel -ErrorAction SilentlyContinue)) {
   if (Get-Command npx -ErrorAction SilentlyContinue) { $warn += "Chua co 'vercel' tren PATH, se dung 'npx vercel' (cham hon)." }
   else { throw "Khong thay ca 'vercel' lan 'npx'. Cai Node.js roi 'npm i -g vercel'." }
@@ -59,7 +69,7 @@ $action  = New-ScheduledTaskAction -Execute 'powershell.exe' `
 $trigger = New-ScheduledTaskTrigger -Daily -At $At
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable `
               -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries `
-              -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
+              -ExecutionTimeLimit (New-TimeSpan -Minutes 45)
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
 
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `

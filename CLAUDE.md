@@ -15,11 +15,21 @@ npm run build                  # vite build → dist/
 vercel --prod                  # deploy (Vercel project: epic-order-map, Vite preset)
 ```
 
-`scripts/append-data.mjs` (`npm run append:data`) là **writer duy nhất** của dữ liệu app: đọc CSV export
-BigQuery mới nhất trong `~/Downloads`, validate header 10 cột, tách mỗi `load_date` thành
-`public/data/<date>.csv`, dedupe theo `employee_id|order_code` trong từng ngày, giữ 14 ngày gần nhất,
-rồi ghi lại `public/data/manifest.json`. `scripts/bq_daily.sql` là bản D-1 tự động của `BQ_QUERY`
-trong `GuideModal.jsx` — sửa thì sửa cả hai.
+`scripts/append-data.mjs` (`npm run append:data`) là **writer duy nhất** của dữ liệu app: đọc một CSV
+(đường dẫn truyền vào, hoặc export BigQuery mới nhất trong `~/Downloads`), validate header 10 cột, tách
+mỗi `load_date` thành `public/data/<date>.csv`, dedupe theo `employee_id|order_code` trong từng ngày,
+giữ 14 ngày gần nhất, rồi ghi lại `public/data/manifest.json`. `scripts/fetch-daily.mjs`
+(`npm run fetch:data`) là nguồn tự động: chạy `scripts/bq_daily.sql` trên BigQuery, ghi CSV thô vào
+`data_incoming/` rồi gọi `append-data.mjs`. Hai backend zero-dep, chọn theo env: **REST API**
+(`BQ_CREDENTIALS_JSON` / `GOOGLE_APPLICATION_CREDENTIALS`, nhận `service_account` lẫn `authorized_user`,
+tự đổi token + `jobs.insert` + `getQueryResults` phân trang) hoặc **`bq` CLI** (Google Cloud SDK trên
+máy user, `--format=json`, `.cmd` phải gọi qua `cmd.exe /d /s /c ""…""`, PATH phải có thư mục SDK để
+bq gọi được gcloud, `PYTHONIOENCODING=utf-8` để tên tiếng Việt không mojibake). Script bỏ 2 dòng
+`DECLARE` của file SQL và thay `DS_START`/`DS_END` bằng `DATE '…'` literal → gửi đi là một SELECT đơn
+(script nhiều statement làm `bq --format=json` trả mảng-của-mảng, `--format=csv` in cả SQL lên đầu).
+`bq_daily.sql` vẫn là bản D-1 tự động của `BQ_QUERY` trong `GuideModal.jsx` — sửa thì sửa cả hai.
+**Không dùng GHN Data API cho pipeline này** (quyết định của user 2026-09-08), không đưa data qua
+Google Sheet.
 
 **App chỉ tải CSV của ngày đang chọn.** `App.jsx` đọc `manifest.json` trước, mặc định ngày mới nhất,
 fetch `data/<date>.csv` khi đổi ngày, cache 3 ngày trong `dayCache` ref. Trong lúc tải **không** được
@@ -31,13 +41,17 @@ cũng là chế độ nút "Nạp CSV khác…" dùng.
 ngày quá hạn được `mv` sang `data_archive/` chứ không xoá, và `npm run build` phải chạy ngoài mount
 vì vite `emptyOutDir` cần unlink.
 
-**Tự động hoá chia hai mắt xích, hai máy.** 10:00 — scheduled task của Claude (Chrome + sandbox) lấy
-data và chạy `append-data.mjs`; nó KHÔNG deploy và KHÔNG commit. 10:15 — Windows Task Scheduler chạy
-`scripts/daily-deploy.ps1` trên chính máy user: gate theo `manifest.json` (bỏ qua nếu ngày mới nhất
-không phải D-1), rồi `docker compose up -d --build` + `vercel --prod`. Đăng ký một lần bằng
-`scripts/register-deploy-task.ps1`. Lý do phải tách: sandbox chỉ ra được npm + github,
-`vercel.com`/`api.vercel.com` bị chặn, và credential Vercel nằm trong profile Windows chứ không
-phải `.vercel/` trong repo (file đó chỉ có projectId/orgId).
+**Tự động hoá chính là GitHub Actions** (`.github/workflows/daily-data.yml`, 03:00 UTC = 10:00 VN,
+user chọn hướng "máy tắt vẫn chạy" 2026-09-08): `fetch-daily.mjs --days 14 --replace-date` (REST,
+secret `BQ_CREDENTIALS_JSON`) → gate manifest có D-1 → `vercel pull/build/deploy --prebuilt --prod`
+(secret `VERCEL_TOKEN`, org/project id ghi thẳng trong yml). **Stateless: CI không commit data** —
+mỗi lần lấy lại trọn 14 ngày (~8 GB quét, ~1 phút) để repo không phình và data tự lành. Data nguồn
+thay đổi lùi (đơn gán thêm sau vài giờ) nên hai lần fetch cùng ngày có thể khác vài dòng; đừng xem
+đó là bug. Dự phòng: Windows Scheduled Task `EPIC Order Map - daily deploy` 10:00 chạy
+`scripts/daily-deploy.ps1` (fetch bq CLI → gate → docker → vercel; `-NoDeploy` để thử), cần session
+user; gỡ bằng `register-deploy-task.ps1 -Unregister` khi CI đã ổn. Không còn mắt xích Claude + Chrome.
+Hai file `.ps1` phải là **UTF-8 có BOM**: PowerShell 5.1 đọc file không BOM theo cp1252 và dấu `—`
+thành ngoặc kép cong, hỏng cú pháp chuỗi.
 
 There is no test suite or linter. Verification is done by hand: Node scripts that import `src/detect.js` / `src/scene.js` directly (pure ESM, zero deps), and headless-Chrome checks via `playwright-core` (`chromium.launch({ channel: "chrome" })`) against localhost:8080.
 

@@ -1,0 +1,119 @@
+# Lấy 14 ngày data gần nhất từ BigQuery → build → deploy Vercel. Chạy trên GitHub, không cần máy user.
+#
+# Stateless: KHÔNG commit data vào repo. Mỗi lần chạy lấy lại trọn cửa sổ 14 ngày (một query,
+# ~8 GB quét, ~1 phút) rồi build + deploy. Sai một ngày thì hôm sau tự lành, repo không phình.
+#
+# Secrets cần có (Settings → Secrets and variables → Actions):
+#   BQ_CREDENTIALS_JSON  JSON credential BigQuery — service account key (nên dùng) hoặc
+#                        authorized_user (file %APPDATA%\gcloud\legacy_credentials\<email>\adc.json)
+#   VERCEL_TOKEN         token tạo ở https://vercel.com/account/tokens
+# VERCEL_ORG_ID / VERCEL_PROJECT_ID không phải bí mật (giống .vercel/project.json), để thẳng dưới đây.
+name: Daily data → Vercel
+
+on:
+  schedule:
+    - cron: "0 3 * * *"          # 03:00 UTC = 10:00 Việt Nam
+  workflow_dispatch:
+    inputs:
+      to:
+        description: "Ngày cuối YYYY-MM-DD (mặc định D-1 giờ VN)"
+        required: false
+        default: ""
+      days:
+        description: "Số ngày lấy (kết thúc ở ngày cuối)"
+        required: false
+        default: "14"
+      deploy:
+        description: "Deploy Vercel sau khi lấy data"
+        type: boolean
+        default: true
+
+concurrency:
+  group: daily-data
+  cancel-in-progress: false
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      BQ_PROJECT: dw-ghn
+      VERCEL_ORG_ID: team_6vvURqAMyY9ShRf11h3vwwnO
+      VERCEL_PROJECT_ID: prj_PWpZT9Po9JBAGdoCSSYwEtmUpyKV
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Kiểm tra secrets
+        env:
+          HAS_BQ: ${{ secrets.BQ_CREDENTIALS_JSON != '' }}
+          HAS_VERCEL: ${{ secrets.VERCEL_TOKEN != '' }}
+        run: |
+          ok=1
+          [ "$HAS_BQ" = "true" ]     || { echo "::error::Thiếu secret BQ_CREDENTIALS_JSON"; ok=0; }
+          [ "$HAS_VERCEL" = "true" ] || { echo "::error::Thiếu secret VERCEL_TOKEN"; ok=0; }
+          [ $ok = 1 ]
+
+      - name: Lấy data từ BigQuery
+        id: fetch
+        env:
+          BQ_CREDENTIALS_JSON: ${{ secrets.BQ_CREDENTIALS_JSON }}
+          IN_TO: ${{ inputs.to }}
+          IN_DAYS: ${{ inputs.days || '14' }}
+        run: |
+          args=(--days "$IN_DAYS" --replace-date)
+          [ -n "$IN_TO" ] && args+=(--to "$IN_TO")
+          set +e
+          node scripts/fetch-daily.mjs "${args[@]}"
+          code=$?
+          set -e
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" = 2 ]; then
+            echo "::warning::BigQuery chưa có dòng nào cho khoảng ngày yêu cầu — bỏ qua deploy."
+            exit 0
+          fi
+          exit "$code"
+
+      - name: Manifest phải có ngày cuối
+        id: gate
+        if: steps.fetch.outputs.code == '0'
+        env:
+          IN_TO: ${{ inputs.to }}
+        run: |
+          node -e '
+            const m = require("./public/data/manifest.json");
+            const vn = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).format(new Date());
+            const d = new Date(vn + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() - 1);
+            const want = process.env.IN_TO || d.toISOString().slice(0, 10);
+            const latest = m.dates[m.dates.length - 1];
+            console.log("manifest:", m.dates.join(", "));
+            console.log("ngay moi nhat:", latest, "| can co:", want);
+            const ok = latest === want;
+            require("fs").appendFileSync(process.env.GITHUB_OUTPUT, `ok=${ok}\n`);
+            if (!ok) console.log("::warning::Chua co data " + want + " — bo qua deploy, production giu data cu.");
+          '
+
+      - name: Deploy Vercel
+        if: steps.gate.outputs.ok == 'true' && (github.event_name == 'schedule' || inputs.deploy)
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN"
+          npx --yes vercel@latest build --prod --token="$VERCEL_TOKEN"
+          url=$(npx --yes vercel@latest deploy --prebuilt --prod --token="$VERCEL_TOKEN")
+          echo "deploy: $url"
+          echo "### Deployed" >> "$GITHUB_STEP_SUMMARY"
+          echo "$url" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Tóm tắt
+        if: always()
+        run: |
+          {
+            echo "### Data"
+            echo '```'
+            cat public/data/manifest.json 2>/dev/null | head -40 || echo "(khong co manifest)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

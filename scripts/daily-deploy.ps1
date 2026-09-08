@@ -1,13 +1,14 @@
-<#
+﻿<#
 .SYNOPSIS
-  Build local + deploy Vercel sau khi scheduled task của Claude đã ghi data D-1.
+  Lấy data D-1 từ BigQuery (bq CLI) → append vào public/data → build local → deploy Vercel.
 
 .DESCRIPTION
-  Chạy trên máy Windows của Khanh (không phải sandbox của Claude — sandbox đó không
-  tới được vercel.com và không có credential Vercel).
+  Chạy trên máy Windows của Khanh bằng Windows Task Scheduler. Toàn bộ chuỗi nằm trong
+  một script, không còn phụ thuộc scheduled task của Claude hay Chrome.
 
-  Script tự bỏ qua nếu public/data/manifest.json chưa có ngày D-1, để không deploy
-  đè bản cũ khi task lấy data buổi sáng fail.
+  Bước lấy data dùng scripts/fetch-daily.mjs (bq CLI của Google Cloud SDK, đăng nhập bằng
+  gcloud auth login). Nếu bước này fail, script vẫn đi tiếp nhưng bước kiểm tra manifest
+  sẽ thấy chưa có D-1 và bỏ qua deploy, để không deploy đè bản cũ.
 
 .PARAMETER Force
   Bỏ qua kiểm tra D-1, deploy luôn với data đang có.
@@ -15,14 +16,24 @@
 .PARAMETER SkipDocker
   Không build container local, chỉ deploy Vercel.
 
+.PARAMETER SkipFetch
+  Không lấy data từ BigQuery, dùng data đang có trong public/data.
+
+.PARAMETER NoDeploy
+  Dừng sau bước lấy data + kiểm tra manifest, không build docker, không deploy Vercel.
+  Dùng để chạy thử chuỗi lấy data.
+
 .EXAMPLE
   .\scripts\daily-deploy.ps1
-  .\scripts\daily-deploy.ps1 -Force -SkipDocker
+  .\scripts\daily-deploy.ps1 -NoDeploy
+  .\scripts\daily-deploy.ps1 -SkipFetch -Force -SkipDocker
 #>
 [CmdletBinding()]
 param(
   [switch]$Force,
-  [switch]$SkipDocker
+  [switch]$SkipDocker,
+  [switch]$SkipFetch,
+  [switch]$NoDeploy
 )
 
 $ErrorActionPreference = 'Stop'
@@ -48,6 +59,24 @@ function Fail {
 Log "===== bat dau ====="
 Log "repo: $repo"
 
+# ---- 0. lay data D-1 tu BigQuery (bq CLI, tai khoan gcloud cua user) ----
+# Loi o buoc nay KHONG dung script: buoc 1 se thay manifest chua co D-1 va tu bo qua deploy,
+# nen production giu data cu thay vi bi deploy de bang chinh data cu.
+if ($SkipFetch) {
+  Log "bo qua lay data (-SkipFetch)"
+} elseif (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+  Log "khong thay 'node' tren PATH — bo qua lay data" 'WARN'
+} else {
+  Log "node scripts/fetch-daily.mjs ..."
+  Push-Location $repo
+  try {
+    & node (Join-Path $PSScriptRoot 'fetch-daily.mjs') 2>&1 | ForEach-Object { Log "  fetch | $_" }
+    if ($LASTEXITCODE -eq 2)     { Log "BigQuery chua co dong nao cho D-1 — data nguon chua san. Se bo qua deploy." 'WARN' }
+    elseif ($LASTEXITCODE -ne 0) { Log "fetch-daily exit $LASTEXITCODE — xem log o tren (het phien gcloud? chay 'gcloud auth login')." 'WARN' }
+    else                          { Log "fetch OK" }
+  } finally { Pop-Location }
+}
+
 # ---- 1. data da co D-1 chua ----
 $manifestPath = Join-Path $repo 'public\data\manifest.json'
 if (-not (Test-Path $manifestPath)) { Fail "Khong thay $manifestPath. Chay 'npm run append:data' truoc." }
@@ -68,6 +97,12 @@ if ($latest -ne $wantD1 -and -not $Force) {
   Log "Chua co data $wantD1 — task lay data sang nay co the da fail. Bo qua deploy." 'WARN'
   Log "Muon deploy voi data dang co thi chay lai voi -Force."
   Log "===== ket thuc (bo qua) ====="
+  exit 0
+}
+
+if ($NoDeploy) {
+  Log "-NoDeploy: data $latest da san sang, dung o day (khong docker, khong vercel)."
+  Log "===== ket thuc (NoDeploy) ====="
   exit 0
 }
 

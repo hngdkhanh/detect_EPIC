@@ -108,44 +108,68 @@ Tuỳ chọn: `--dry-run`, `<duong-dan.csv>`, `--downloads <thu-muc>`, `--keep-d
 
 > `scripts/bq_daily.sql` và `BQ_QUERY` trong `GuideModal.jsx` là cùng một query,
 > chỉ khác 2 dòng `DECLARE`: file SQL lấy D-1 tự động, GuideModal để người dùng tự điền ngày.
+> `fetch-daily.mjs` đọc chính file SQL này và thay 2 dòng `DECLARE` bằng ngày cụ thể.
 
 ### Chạy tự động hàng ngày
 
-Hai mắt xích, chạy trên hai máy khác nhau:
+Không dùng Data API, không dùng Google Sheet, không cần Chrome. `scripts/fetch-daily.mjs` chạy
+`bq_daily.sql` thẳng trên BigQuery, ghi CSV thô vào `data_incoming/` (gitignore), rồi gọi
+`append-data.mjs`. Nó có hai backend, chọn theo env:
 
-| Giờ | Ai chạy | Làm gì |
+| Backend | Khi nào | Credential |
 | --- | --- | --- |
-| 10:00 | Scheduled task của Claude (sandbox + Chrome trên máy này) | Mở BigQuery, chạy `bq_daily.sql`, tải CSV, `append-data.mjs` → `public/data/` |
-| 10:15 | Windows Task Scheduler (máy này) | `daily-deploy.ps1`: kiểm tra manifest đã có D-1 chưa → `docker compose up -d --build` → `vercel --prod` |
+| **REST API** | có `BQ_CREDENTIALS_JSON` (nội dung) hoặc `GOOGLE_APPLICATION_CREDENTIALS` (đường dẫn) | JSON `service_account` (nên dùng) hoặc `authorized_user` (file gcloud tạo ở `%APPDATA%\gcloud\legacy_credentials\<email>\adc.json`) |
+| **`bq` CLI** | không có env trên, máy có Google Cloud SDK | tài khoản `gcloud auth login` |
 
-Phải tách làm hai vì sandbox của Claude không tới được `vercel.com`/`api.vercel.com`
-(allowlist chỉ mở npm và github) và cũng không có credential Vercel — token đăng nhập
-nằm trong profile Windows.
+Hai đường vận hành, cùng một script:
 
-**Đăng ký một lần:**
+#### A. GitHub Actions (chính) — máy tắt vẫn chạy
+
+`.github/workflows/daily-data.yml` chạy 10:00 VN mỗi ngày trên GitHub: lấy **trọn 14 ngày** gần
+nhất trong một query (~8 GB quét, ~1 phút, 260k dòng), `append-data --replace-date`, rồi
+`vercel pull/build/deploy --prebuilt --prod`. **Stateless**: không commit data vào repo, nên repo
+không phình 7 MB/ngày và một ngày sai sẽ tự lành ở lần chạy sau (data nguồn cũng thay đổi lùi:
+đơn được gán thêm sau vài giờ).
+
+Secrets cần thêm một lần (Settings → Secrets and variables → Actions):
+
+| Secret | Lấy ở đâu |
+| --- | --- |
+| `BQ_CREDENTIALS_JSON` | Tốt nhất: service account key do Data team cấp, có quyền đọc 3 bảng nguồn + `bigquery.jobs.create` trên `dw-ghn`. Tạm thời: nội dung file `%APPDATA%\gcloud\legacy_credentials\<email>\adc.json` (refresh token cá nhân — hết hạn theo chính sách Workspace, đổi mật khẩu là chết) |
+| `VERCEL_TOKEN` | https://vercel.com/account/tokens |
+
+`VERCEL_ORG_ID` / `VERCEL_PROJECT_ID` không bí mật, ghi thẳng trong workflow (giống `.vercel/project.json`).
+Chạy tay: tab **Actions → Daily data → Vercel → Run workflow**, có thể chọn ngày cuối, số ngày,
+và tắt deploy để chỉ kiểm tra data. Nếu BigQuery chưa có dòng nào cho D-1, workflow cảnh báo và
+**bỏ qua deploy**, production giữ data cũ.
+
+#### B. Windows Task Scheduler (dự phòng, cần máy bật + đã đăng nhập)
+
+`scripts/daily-deploy.ps1` lúc 10:00: fetch D-1 (bq CLI) → gate manifest có D-1 → `docker compose
+up -d --build` → `vercel --prod`. Đăng ký/gỡ bằng `scripts/register-deploy-task.ps1` (kiểm tra sẵn
+`node` / `bq` / `vercel` / `docker`). Khi đường A đã chạy ổn thì gỡ task này để khỏi deploy hai lần:
 
 ```powershell
-cd C:\Users\khanhhnd\Desktop\detect_EPIC
-powershell -ExecutionPolicy Bypass -File .\scripts\register-deploy-task.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\register-deploy-task.ps1 -Unregister
 ```
-
-Script kiểm tra sẵn `vercel` / `npx` / `docker` / `manifest.json` / `.vercel/project.json`
-và cảnh báo ngay lúc đăng ký, thay vì để fail âm thầm lúc 10h15 sáng mai.
 
 | Việc | Lệnh |
 | --- | --- |
-| Chạy thử ngay | `Start-ScheduledTask -TaskName 'EPIC Order Map - daily deploy'` |
-| Deploy tay | `.\scripts\daily-deploy.ps1` |
-| Deploy dù data chưa mới | `.\scripts\daily-deploy.ps1 -Force` |
-| Đổi giờ | `.\scripts\register-deploy-task.ps1 -At 11:00` |
-| Gỡ bỏ | `.\scripts\register-deploy-task.ps1 -Unregister` |
+| Validate query + ước lượng bytes | `node scripts/fetch-daily.mjs --dry-run` |
+| Chỉ lấy data D-1 (bq CLI) | `npm run fetch:data` |
+| Lấy lại một ngày / backfill | `node scripts/fetch-daily.mjs --date 2026-09-01 --to 2026-09-05` |
+| Đúng như CI làm | `node scripts/fetch-daily.mjs --days 14 --replace-date` |
+| Thử chuỗi local, không deploy | `.\scripts\daily-deploy.ps1 -NoDeploy` |
+| Deploy tay dù data chưa mới | `.\scripts\daily-deploy.ps1 -SkipFetch -Force` |
+| Chạy task local ngay | `Start-ScheduledTask -TaskName 'EPIC Order Map - daily deploy'` |
 
-Log ở `logs/deploy-<ngày>.log`, giữ 30 file gần nhất.
+Log local ở `logs/deploy-<ngày>.log` (30 file), log CI ở tab Actions. `fetch-daily.mjs` thoát mã 2
+khi query chạy được nhưng không có dòng nào (warehouse chưa nạp) — cả hai đường coi là "chưa có
+data", không phải lỗi. Lỗi hay gặp nhất: credential hết hạn → `gcloud auth login` (local) hoặc
+cập nhật secret (CI).
 
-`daily-deploy.ps1` **bỏ qua deploy** nếu ngày mới nhất trong `manifest.json` không phải D-1
-— tức là khi task 10h fail thì bản production giữ nguyên data cũ thay vì bị deploy đè bằng
-chính data cũ đó. Điều kiện: máy bật và đã đăng nhập (Docker Desktop lẫn vercel CLI đều cần
-session của user).
+> Hai file `.ps1` phải lưu **UTF-8 có BOM**: Windows PowerShell 5.1 đọc file không BOM theo
+> codepage 1252, dấu `—` biến thành ngoặc kép cong và làm hỏng cú pháp chuỗi.
 
 ## Sự cố đã biết
 
