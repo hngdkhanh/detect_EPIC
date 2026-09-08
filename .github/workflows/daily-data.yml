@@ -3,6 +3,11 @@
 # Stateless: KHÔNG commit data vào repo. Mỗi lần chạy lấy lại trọn cửa sổ 14 ngày (một query,
 # ~8 GB quét, ~1 phút) rồi build + deploy. Sai một ngày thì hôm sau tự lành, repo không phình.
 #
+# QUAN TRỌNG — workflow này là ĐƯỜNG DUY NHẤT deploy production. `vercel.json` tắt Git
+# auto-deploy cho nhánh main, vì data không nằm trong repo: để Vercel tự build từ Git thì mỗi
+# lần push code, production sẽ tụt về mấy ngày data cũ còn sót trong repo. Vì vậy workflow chạy
+# cả khi push vào main (lấy data mới rồi deploy). Đừng bật lại Git auto-deploy khi chưa commit data.
+#
 # Secrets cần có (Settings → Secrets and variables → Actions):
 #   BQ_CREDENTIALS_JSON  JSON credential BigQuery — service account key (nên dùng) hoặc
 #                        authorized_user (file %APPDATA%\gcloud\legacy_credentials\<email>\adc.json)
@@ -13,6 +18,11 @@ name: Daily data → Vercel
 on:
   schedule:
     - cron: "0 3 * * *"          # 03:00 UTC = 10:00 Việt Nam
+  push:
+    branches: [main]             # đổi code cũng deploy, KÈM data mới (xem vercel.json)
+    paths-ignore:
+      - "**/*.md"
+      - "data_archive/**"
   workflow_dispatch:
     inputs:
       to:
@@ -96,8 +106,9 @@ jobs:
             if (!ok) console.log("::warning::Chua co data " + want + " — bo qua deploy, production giu data cu.");
           '
 
+      # workflow_dispatch: theo ô "deploy" người chạy chọn. schedule/push: luôn deploy.
       - name: Deploy Vercel
-        if: steps.gate.outputs.ok == 'true' && (github.event_name == 'schedule' || inputs.deploy)
+        if: steps.gate.outputs.ok == 'true' && (github.event_name != 'workflow_dispatch' || inputs.deploy)
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |

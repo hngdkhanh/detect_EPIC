@@ -143,6 +143,12 @@ Chạy tay: tab **Actions → Daily data → Vercel → Run workflow**, có th�
 và tắt deploy để chỉ kiểm tra data. Nếu BigQuery chưa có dòng nào cho D-1, workflow cảnh báo và
 **bỏ qua deploy**, production giữ data cũ.
 
+> **`vercel.json` tắt Git auto-deploy cho `main` — đừng bỏ.** Data không nằm trong repo, nên nếu
+> Vercel tự build từ Git thì mỗi lần push code production sẽ tụt về mấy ngày data cũ còn sót trong
+> `public/data/`. Workflow này là đường **duy nhất** deploy production, và nó chạy cả khi push vào
+> `main` (bỏ qua nếu chỉ đổi `*.md`) nên đổi code vẫn lên production bình thường, kèm data mới.
+> Mấy file ngày còn commit trong `public/data/` chỉ để `npm run dev` local có dữ liệu.
+
 #### B. Windows Task Scheduler (dự phòng, cần máy bật + đã đăng nhập)
 
 `scripts/daily-deploy.ps1` lúc 10:00: fetch D-1 (bq CLI) → gate manifest có D-1 → `docker compose

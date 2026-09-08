@@ -45,7 +45,15 @@ vì vite `emptyOutDir` cần unlink.
 user chọn hướng "máy tắt vẫn chạy" 2026-09-08): `fetch-daily.mjs --days 14 --replace-date` (REST,
 secret `BQ_CREDENTIALS_JSON`) → gate manifest có D-1 → `vercel pull/build/deploy --prebuilt --prod`
 (secret `VERCEL_TOKEN`, org/project id ghi thẳng trong yml). **Stateless: CI không commit data** —
-mỗi lần lấy lại trọn 14 ngày (~8 GB quét, ~1 phút) để repo không phình và data tự lành. Data nguồn
+mỗi lần lấy lại trọn 14 ngày (~8 GB quét, ~1 phút) để repo không phình và data tự lành.
+
+**`vercel.json` tắt Git auto-deploy cho `main` (`git.deploymentEnabled.main = false`) và đó là điều
+kiện sống của thiết kế stateless**: data không nằm trong repo, nên nếu để Vercel tự build từ Git thì
+mỗi lần push code production sẽ tụt về vài ngày data cũ còn sót trong `public/data/` (đã xảy ra thật
+2026-09-08). Vì vậy workflow là đường **duy nhất** deploy production và nó chạy cả trên `push` vào
+`main` (bỏ qua khi chỉ đổi `*.md`). Muốn bật lại Git auto-deploy thì phải commit data trước.
+Mấy file ngày còn commit trong `public/data/` chỉ để `npm run dev` local có dữ liệu; CI ghi đè chúng
+rồi tự dời ngày ngoài cửa sổ sang `data_archive/`. Data nguồn
 thay đổi lùi (đơn gán thêm sau vài giờ) nên hai lần fetch cùng ngày có thể khác vài dòng; đừng xem
 đó là bug. Dự phòng: Windows Scheduled Task `EPIC Order Map - daily deploy` 10:00 chạy
 `scripts/daily-deploy.ps1` (fetch bq CLI → gate → docker → vercel; `-NoDeploy` để thử), cần session
