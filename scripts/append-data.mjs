@@ -5,7 +5,7 @@
  * Layout:
  *   public/data/<YYYY-MM-DD>.csv   một file cho mỗi load_date
  *   public/data/manifest.json      danh sách ngày có sẵn, app đọc file này trước
- *   data_archive/                  ngày quá hạn được DỜI về đây (không xoá — xem ghi chú)
+ *   data_archive/                  chỉ dùng khi xoá bị từ chối (EPERM); bình thường ngày quá hạn bị XOÁ
  *
  * Cách dùng:
  *   node scripts/append-data.mjs                  # tự tìm CSV mới nhất trong Downloads
@@ -17,8 +17,9 @@
  *   node scripts/append-data.mjs --replace-date   # ghi đè cả ngày thay vì merge
  *   node scripts/append-data.mjs --downloads <thu-muc>
  *
- * Ghi chú: script DỜI file quá hạn sang data_archive/ chứ không xoá, vì sandbox chạy
- * scheduled task không có quyền unlink trong thư mục được mount. Dọn data_archive/ bằng tay.
+ * Ghi chú: chỉ giữ 14 ngày gần nhất, ngày quá hạn bị xoá thẳng. Trước đây script DỜI sang
+ * data_archive/ vì sandbox của scheduled task Claude không unlink được; task đó đã bỏ (09/2026),
+ * nay data_archive/ chỉ còn là đường lùi khi unlink trả EPERM.
  *
  * Zero dependency, ESM thuần — giống detect.js / scene.js.
  */
@@ -261,7 +262,7 @@ if (!writes.length && !expired.length && manifestStale) {
 }
 
 if (dryRun) {
-  console.log(`\n🔍 --dry-run: sẽ ghi ${writes.length} file ngày, dời ${expired.length} file quá hạn, cập nhật manifest. Không ghi gì.\n`);
+  console.log(`\n🔍 --dry-run: sẽ ghi ${writes.length} file ngày, xoá ${expired.length} file quá hạn, cập nhật manifest. Không ghi gì.\n`);
   process.exit(0);
 }
 
@@ -276,16 +277,24 @@ for (const w of writes) {
   if (mb > SIZE_WARN_MB) console.warn(`⚠️  ${w.date}.csv nặng ${mb.toFixed(1)} MB — app tải nguyên ngày này mỗi lần chọn.`);
 }
 
-/* dời ngày quá hạn — KHÔNG unlink, sandbox của scheduled task không có quyền xoá */
-if (expired.length) {
-  fs.mkdirSync(ARCHIVE, { recursive: true });
-  for (const d of expired) {
-    const from = dayPath(d);
-    if (!fs.existsSync(from)) continue;
+/* xoá ngày quá hạn — chỉ giữ 14 ngày gần nhất, ngày cũ hơn không có giá trị gì (user chốt
+   2026-09-08 để nhẹ dung lượng). Riêng khi unlink bị từ chối (EPERM: thư mục mount của sandbox
+   cũ) thì dời sang data_archive/ để không làm hỏng lần chạy. */
+const deleted = [], archived = [];
+for (const d of expired) {
+  const from = dayPath(d);
+  if (!fs.existsSync(from)) continue;
+  try {
+    fs.unlinkSync(from);
+    deleted.push(d);
+  } catch (e) {
+    fs.mkdirSync(ARCHIVE, { recursive: true });
     let to = path.join(ARCHIVE, `${d}.csv`);
     let n = 1;
     while (fs.existsSync(to)) to = path.join(ARCHIVE, `${d}.${n++}.csv`);
     fs.renameSync(from, to);
+    archived.push(d);
+    console.warn(`⚠️  Không xoá được ${d}.csv (${e.code || e.message}) — đã dời sang data_archive/.`);
   }
 }
 
@@ -310,5 +319,6 @@ const totalRows = manifest.days.reduce((s, x) => s + x.rows, 0);
 console.log(`\n✅ ${manifest.days.length} ngày — ${totalRows} dòng — ${fmtBytes(totalBytes)} tổng`);
 console.log(`   ${manifest.days.map((x) => `${x.date} (${x.rows})`).join(", ")}`);
 console.log(`   Nặng nhất: ${fmtBytes(Math.max(...manifest.days.map((x) => x.bytes)))} — đây mới là thứ trình duyệt phải tải.`);
-if (expired.length) console.log(`   Đã dời ${expired.length} ngày quá hạn sang data_archive/ (xoá tay khi cần).`);
+if (deleted.length) console.log(`   Đã xoá ${deleted.length} ngày quá hạn: ${deleted.join(", ")}`);
+if (archived.length) console.log(`   Đã dời ${archived.length} ngày quá hạn sang data_archive/ vì không xoá được — dọn tay.`);
 console.log("");

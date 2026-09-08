@@ -67,10 +67,19 @@ if ($SkipFetch) {
 } elseif (-not (Get-Command node -ErrorAction SilentlyContinue)) {
   Log "khong thay 'node' tren PATH — bo qua lay data" 'WARN'
 } else {
-  Log "node scripts/fetch-daily.mjs ..."
   Push-Location $repo
   try {
-    & node (Join-Path $PSScriptRoot 'fetch-daily.mjs') 2>&1 | ForEach-Object { Log "  fetch | $_" }
+    # Giong CI: keo cua so 14 ngay dang chay tren production ve truoc, roi chi hoi BigQuery D-1.
+    # public/data/ khong con trong git nen may moi clone se trong; khong keo duoc thi lay tron 14 ngay.
+    Log "node scripts/pull-prod-data.mjs ..."
+    & node (Join-Path $PSScriptRoot 'pull-prod-data.mjs') 2>&1 | ForEach-Object { Log "  pull  | $_" }
+    $fetchArgs = @('--days', '1', '--replace-date')
+    if ($LASTEXITCODE -ne 0) {
+      Log "khong keo duoc data tu production — hoi BigQuery tron 14 ngay" 'WARN'
+      $fetchArgs = @('--days', '14', '--replace-date')
+    }
+    Log "node scripts/fetch-daily.mjs $($fetchArgs -join ' ') ..."
+    & node (Join-Path $PSScriptRoot 'fetch-daily.mjs') @fetchArgs 2>&1 | ForEach-Object { Log "  fetch | $_" }
     if ($LASTEXITCODE -eq 2)     { Log "BigQuery chua co dong nao cho D-1 — data nguon chua san. Se bo qua deploy." 'WARN' }
     elseif ($LASTEXITCODE -ne 0) { Log "fetch-daily exit $LASTEXITCODE — xem log o tren (het phien gcloud? chay 'gcloud auth login')." 'WARN' }
     else                          { Log "fetch OK" }
@@ -134,13 +143,22 @@ if (Get-Command vercel -ErrorAction SilentlyContinue) {
   Fail "Khong thay ca 'vercel' lan 'npx'. Cai bang: npm i -g vercel"
 }
 
-Log "$vercelCmd --prod ..."
+# Cung chuoi voi CI: pull -> build local -> deploy --prebuilt. Khong dung `vercel --prod` (upload
+# nguon roi build tren Vercel) vi CLI bo qua file trong .gitignore, ma public/data/ nay da gitignore
+# -> ban deploy se KHONG co data. Build local doc thang tu dia nen khong bi anh huong.
 Push-Location $repo
 try {
-  $out = & $vercelCmd @vercelArgs '--prod' '--yes' 2>&1
-  $out | ForEach-Object { Log "  vercel | $_" }
-  if ($LASTEXITCODE -ne 0) {
-    Fail "vercel exit $LASTEXITCODE. Neu la loi dang nhap thi chay 'vercel login' mot lan roi thoi."
+  foreach ($step in @(
+    @{ n = 'pull';   a = @('pull', '--yes', '--environment=production') },
+    @{ n = 'build';  a = @('build', '--prod') },
+    @{ n = 'deploy'; a = @('deploy', '--prebuilt', '--prod') }
+  )) {
+    Log "$vercelCmd $($step.a -join ' ') ..."
+    $out = & $vercelCmd @vercelArgs @($step.a) 2>&1
+    $out | ForEach-Object { Log "  vercel | $_" }
+    if ($LASTEXITCODE -ne 0) {
+      Fail "vercel $($step.n) exit $LASTEXITCODE. Neu la loi dang nhap thi chay 'vercel login' mot lan roi thoi."
+    }
   }
   $url = ($out | Select-String -Pattern 'https://\S+' -AllMatches |
           ForEach-Object { $_.Matches.Value } | Select-Object -Last 1)

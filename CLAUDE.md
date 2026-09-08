@@ -37,23 +37,28 @@ clear `orders`: `bcDrivers` rỗng sẽ làm effect self-heal đá `driver` về
 người dùng mỗi lần đổi ngày. Thiếu `manifest.json` → rơi về `public/test.csv` (chế độ `perDay=false`),
 cũng là chế độ nút "Nạp CSV khác…" dùng.
 
-**Sandbox chạy trên máy user không xoá được file trong thư mục mount** (`unlink` → EPERM). Hệ quả:
-ngày quá hạn được `mv` sang `data_archive/` chứ không xoá, và `npm run build` phải chạy ngoài mount
-vì vite `emptyOutDir` cần unlink.
+**Chỉ giữ 14 ngày, ngày quá hạn bị xoá thẳng** (user chốt 2026-09-08 để nhẹ dung lượng). `append-data`
+chỉ rơi về dời sang `data_archive/` khi `unlink` trả EPERM (di sản của sandbox mount của task Claude cũ,
+đã bỏ). **`public/data/*.csv` và `manifest.json` không còn được commit** (gitignore): bản trong repo luôn
+cũ và từng làm production tụt data khi Vercel tự deploy từ Git. Dev local / docker: chạy
+`node scripts/pull-prod-data.mjs` một lần để có 14 ngày đang chạy trên production.
 
 **Tự động hoá chính là GitHub Actions** (`.github/workflows/daily-data.yml`, 03:00 UTC = 10:00 VN,
-user chọn hướng "máy tắt vẫn chạy" 2026-09-08): `fetch-daily.mjs --days 14 --replace-date` (REST,
-secret `BQ_CREDENTIALS_JSON`) → gate manifest có D-1 → `vercel pull/build/deploy --prebuilt --prod`
-(secret `VERCEL_TOKEN`, org/project id ghi thẳng trong yml). **Stateless: CI không commit data** —
-mỗi lần lấy lại trọn 14 ngày (~8 GB quét, ~1 phút) để repo không phình và data tự lành.
+user chọn hướng "máy tắt vẫn chạy" 2026-09-08), **cửa sổ lăn**: `pull-prod-data.mjs` kéo 14 ngày đang
+chạy trên production về → `fetch-daily.mjs --days 1 --replace-date` hỏi BigQuery đúng D-1 (REST, secret
+`BQ_CREDENTIALS_JSON`, ~3 GB) → `append-data` ghép + bỏ ngày cũ nhất → gate manifest có D-1 →
+`vercel pull/build/deploy --prebuilt --prod` (secret `VERCEL_TOKEN`, org/project id ghi thẳng trong yml).
+**CI không commit data**; trạng thái 14 ngày nằm ở bản deploy đang chạy. Kéo production thất bại →
+tự rơi về `--days 14` (~8 GB). Ngày đã vào cửa sổ **đóng băng** (user chọn D-1-only 2026-09-08 dù biết
+data nguồn sửa lùi); làm mới cả cửa sổ bằng Run workflow `days=14`. Nếu bật Deployment Protection,
+đặt secret `VERCEL_BYPASS` để `pull-prod-data.mjs` gửi header `x-vercel-protection-bypass`.
 
 **`vercel.json` tắt Git auto-deploy cho `main` (`git.deploymentEnabled.main = false`) và đó là điều
 kiện sống của thiết kế stateless**: data không nằm trong repo, nên nếu để Vercel tự build từ Git thì
 mỗi lần push code production sẽ tụt về vài ngày data cũ còn sót trong `public/data/` (đã xảy ra thật
 2026-09-08). Vì vậy workflow là đường **duy nhất** deploy production và nó chạy cả trên `push` vào
 `main` (bỏ qua khi chỉ đổi `*.md`). Muốn bật lại Git auto-deploy thì phải commit data trước.
-Mấy file ngày còn commit trong `public/data/` chỉ để `npm run dev` local có dữ liệu; CI ghi đè chúng
-rồi tự dời ngày ngoài cửa sổ sang `data_archive/`. Data nguồn
+`public/data/` không còn file nào trong git (gitignore từ 2026-09-08), nên bẫy này đã đóng. Data nguồn
 thay đổi lùi (đơn gán thêm sau vài giờ) nên hai lần fetch cùng ngày có thể khác vài dòng; đừng xem
 đó là bug. Dự phòng: Windows Scheduled Task `EPIC Order Map - daily deploy` 10:00 chạy
 `scripts/daily-deploy.ps1` (fetch bq CLI → gate → docker → vercel; `-NoDeploy` để thử), cần session

@@ -9,3 +9,7 @@ _to_delete
 logs
 
 data_incoming
+
+# data app: chi giu 14 ngay, luon lay tu production/BigQuery, khong commit (ban trong repo luon cu)
+public/data/*.csv
+public/data/manifest.json

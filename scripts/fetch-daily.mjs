@@ -45,7 +45,7 @@ const SQL_FILE = path.join(ROOT, "scripts", "bq_daily.sql");
 const APPEND = path.join(ROOT, "scripts", "append-data.mjs");
 const INCOMING = path.join(ROOT, "data_incoming");
 const PROJECT = process.env.BQ_PROJECT || "dw-ghn";
-const KEEP_INCOMING = 7;       // giữ lại vài file CSV thô gần nhất để soi khi có sự cố
+const KEEP_INCOMING = 2;       // file CSV thô 5-45 MB/cái; giữ 2 bản gần nhất để soi khi có sự cố là đủ
 const MIN_ROWS_WARN = 5000;    // một ngày bình thường ~30-40k dòng
 
 /* Header bắt buộc — khớp scripts/append-data.mjs và findCol trong src/detect.js */

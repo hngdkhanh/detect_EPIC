@@ -4,9 +4,11 @@ Trang phát hiện đơn gán ngoài xa vùng gợi ý EPIC — project React n�
 
 ## Setup local (Docker)
 
-Yêu cầu duy nhất: **Docker Desktop** đang chạy (không cần cài Node/npm).
+Yêu cầu: **Docker Desktop** đang chạy, và Node để kéo data về một lần (`public/data/` không nằm
+trong git; image build bằng Node bên trong nhưng data phải có sẵn trên đĩa lúc build).
 
 ```bash
+node scripts/pull-prod-data.mjs   # kéo 14 ngày đang chạy trên production về public/data/ (~34 MB)
 docker compose up -d --build
 ```
 
@@ -21,7 +23,7 @@ Nginx đã cấu hình sẵn gzip, cache dài hạn cho bundle (`/assets/`), no-
 ```bash
 docker ps                          # kiểm tra: thấy epic-order-map ... (healthy) là đang chạy
 docker logs epic-order-map         # xem log Nginx
-docker compose up -d --build       # build & chạy lại sau khi đổi code/dữ liệu
+docker compose up -d --build       # build & chạy lại sau khi đổi code (muốn data mới: chạy pull-prod-data trước)
 docker compose down                # tắt hẳn
 ```
 
@@ -33,8 +35,12 @@ docker compose down                # tắt hẳn
 
 ```bash
 npm install
-npm run dev      # mở http://localhost:5173
+node scripts/pull-prod-data.mjs   # lần đầu, hoặc khi muốn data mới: kéo 14 ngày đang chạy trên production về public/data/
+npm run dev                       # mở http://localhost:5173
 ```
+
+`public/data/` không nằm trong git (bản trong repo luôn cũ), nên clone mới sẽ trống cho tới khi
+chạy dòng `pull-prod-data` ở trên. Điều này áp dụng cho cả `docker compose up --build`.
 
 ## Deploy lên Vercel
 
@@ -60,7 +66,7 @@ Dữ liệu **tách theo ngày** trong `public/data/`:
 public/data/manifest.json     danh sách ngày có sẵn — app đọc file này trước
 public/data/2026-08-27.csv    một file cho mỗi load_date
 public/drivers.csv            mapping tài xế → bưu cục (ghi đè tên/BC của file chính)
-data_archive/                 ngày quá hạn được dời về đây (không xoá tự động)
+data_archive/                 chỉ xuất hiện khi xoá bị từ chối (EPERM); bình thường ngày quá hạn bị xoá
 ```
 
 App chỉ tải CSV của **ngày đang chọn** (~3 MB), không tải cả kho. Đổi ngày → fetch file
@@ -89,7 +95,7 @@ npm run append:data
 | Validate | Header phải khớp đúng 10 cột theo thứ tự. Sai → thoát, không ghi gì. |
 | Tách ngày | Mỗi `load_date` vào một file riêng, merge vào file ngày đã có. |
 | Dedupe | Key `employee_id\|order_code` trong từng ngày. Chạy lại nhiều lần không nhân đôi. |
-| Giữ ngày | 14 ngày gần nhất. Ngày quá hạn **dời** sang `data_archive/`. |
+| Giữ ngày | 14 ngày gần nhất. Ngày quá hạn bị **xoá** (dời sang `data_archive/` chỉ khi unlink bị từ chối). |
 | Manifest | Ghi lại `manifest.json` (ngày, số dòng, bytes) sau mỗi lần chạy. |
 | Ghi | Atomic (`.tmp` + rename). Cảnh báo nếu một ngày vượt 8 MB. |
 
@@ -98,9 +104,11 @@ Tuỳ chọn: `--dry-run`, `<duong-dan.csv>`, `--downloads <thu-muc>`, `--keep-d
 `--replace-date` (ghi đè cả ngày thay vì merge — dùng khi chạy lại một ngày đã sai),
 `--migrate` (tách `public/test.csv` sẵn có ra `public/data/`).
 
-> **Không xoá được, chỉ dời.** Sandbox chạy scheduled task không có quyền `unlink` trong
-> thư mục được mount, nên ngày quá hạn đi vào `data_archive/`. Dọn thư mục đó bằng tay.
-> Cùng lý do: `npm run build` phải chạy ngoài sandbox (vite cần xoá `dist/` trước khi ghi).
+> **Chỉ giữ 14 ngày, ngày cũ hơn bị xoá thẳng.** `public/data/*.csv` và `manifest.json`
+> không còn được commit (gitignore) vì bản trong repo luôn cũ và từng làm production tụt data khi
+> Vercel tự deploy từ Git. Dev local lấy data bằng `node scripts/pull-prod-data.mjs` (14 ngày đang
+> chạy trên production, ~34 MB) trước khi `npm run dev` hay `docker compose up --build`.
+> `data_archive/` chỉ còn là đường lùi khi `unlink` bị từ chối (EPERM); bình thường không có gì trong đó.
 
 > Khi format export BigQuery đổi: sửa `HEADER` trong `scripts/append-data.mjs`,
 > alias list trong `loadOrders` (`src/detect.js`), và `BQ_QUERY` trong `src/GuideModal.jsx`
@@ -125,11 +133,20 @@ Hai đường vận hành, cùng một script:
 
 #### A. GitHub Actions (chính) — máy tắt vẫn chạy
 
-`.github/workflows/daily-data.yml` chạy 10:00 VN mỗi ngày trên GitHub: lấy **trọn 14 ngày** gần
-nhất trong một query (~8 GB quét, ~1 phút, 260k dòng), `append-data --replace-date`, rồi
-`vercel pull/build/deploy --prebuilt --prod`. **Stateless**: không commit data vào repo, nên repo
-không phình 7 MB/ngày và một ngày sai sẽ tự lành ở lần chạy sau (data nguồn cũng thay đổi lùi:
-đơn được gán thêm sau vài giờ).
+`.github/workflows/daily-data.yml` chạy 10:00 VN mỗi ngày trên GitHub, theo kiểu **cửa sổ lăn**:
+
+1. `pull-prod-data.mjs` kéo 14 ngày đang chạy trên production về (34 MB, vài giây).
+2. `fetch-daily.mjs --days 1` hỏi BigQuery **đúng ngày hôm qua** (~3 GB quét, ~25 giây).
+3. `append-data --replace-date` ghép vào, bỏ ngày cũ nhất ra khỏi cửa sổ 14 ngày.
+4. `vercel pull/build/deploy --prebuilt --prod`.
+
+Repo **không lưu data**; trạng thái 14 ngày nằm ở chính bản deploy đang chạy. Không kéo được từ
+production (sập, đổi domain, bật Deployment Protection mà chưa đặt secret `VERCEL_BYPASS`) thì
+workflow tự rơi về hỏi BigQuery trọn 14 ngày (~8 GB, ~1 phút), vẫn ra đúng kết quả.
+
+Hệ quả cần nhớ: một ngày đã vào cửa sổ sẽ **đóng băng** như lúc lấy. Data nguồn có sửa lùi (đơn
+gán thêm sau vài giờ) cũng không được cập nhật. Muốn làm mới cả cửa sổ: **Run workflow** với
+`days` = 14.
 
 Secrets cần thêm một lần (Settings → Secrets and variables → Actions):
 
@@ -147,7 +164,7 @@ và tắt deploy để chỉ kiểm tra data. Nếu BigQuery chưa có dòng nà
 > Vercel tự build từ Git thì mỗi lần push code production sẽ tụt về mấy ngày data cũ còn sót trong
 > `public/data/`. Workflow này là đường **duy nhất** deploy production, và nó chạy cả khi push vào
 > `main` (bỏ qua nếu chỉ đổi `*.md`) nên đổi code vẫn lên production bình thường, kèm data mới.
-> Mấy file ngày còn commit trong `public/data/` chỉ để `npm run dev` local có dữ liệu.
+> `public/data/` không được commit; dev local chạy `node scripts/pull-prod-data.mjs` một lần để có 14 ngày.
 
 #### B. Windows Task Scheduler (dự phòng, cần máy bật + đã đăng nhập)
 
@@ -164,7 +181,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\register-deploy-task.ps1 -Unr
 | Validate query + ước lượng bytes | `node scripts/fetch-daily.mjs --dry-run` |
 | Chỉ lấy data D-1 (bq CLI) | `npm run fetch:data` |
 | Lấy lại một ngày / backfill | `node scripts/fetch-daily.mjs --date 2026-09-01 --to 2026-09-05` |
-| Đúng như CI làm | `node scripts/fetch-daily.mjs --days 14 --replace-date` |
+| Kéo data production về máy (dev local có đủ 14 ngày) | `node scripts/pull-prod-data.mjs` |
+| Đúng như CI làm mỗi sáng | `node scripts/pull-prod-data.mjs && node scripts/fetch-daily.mjs --days 1 --replace-date` |
+| Làm mới cả cửa sổ từ BigQuery | `node scripts/fetch-daily.mjs --days 14 --replace-date` |
 | Thử chuỗi local, không deploy | `.\scripts\daily-deploy.ps1 -NoDeploy` |
 | Deploy tay dù data chưa mới | `.\scripts\daily-deploy.ps1 -SkipFetch -Force` |
 | Chạy task local ngay | `Start-ScheduledTask -TaskName 'EPIC Order Map - daily deploy'` |

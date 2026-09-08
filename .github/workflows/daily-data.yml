@@ -1,7 +1,14 @@
-# Lấy 14 ngày data gần nhất từ BigQuery → build → deploy Vercel. Chạy trên GitHub, không cần máy user.
+# Mỗi sáng: kéo cửa sổ 14 ngày đang chạy trên production về → hỏi BigQuery ĐÚNG NGÀY HÔM QUA →
+# ghép vào, bỏ ngày cũ nhất → build → deploy Vercel. Chạy trên GitHub, không cần máy user.
 #
-# Stateless: KHÔNG commit data vào repo. Mỗi lần chạy lấy lại trọn cửa sổ 14 ngày (một query,
-# ~8 GB quét, ~1 phút) rồi build + deploy. Sai một ngày thì hôm sau tự lành, repo không phình.
+# Repo KHÔNG lưu data, mỗi lần chạy là một máy trắng. Cửa sổ 14 ngày là trạng thái, và trạng thái
+# đó nằm ở chính bản deploy đang chạy (scripts/pull-prod-data.mjs kéo về). Nhờ vậy BigQuery chỉ
+# quét ~3 GB/ngày thay vì ~8 GB, và repo không phình. Không kéo được từ production (sập, đổi
+# domain, bật Deployment Protection mà chưa có VERCEL_BYPASS) thì rơi về lấy trọn 14 ngày từ
+# BigQuery như trước — chậm và tốn hơn nhưng vẫn ra đúng kết quả.
+#
+# Hệ quả cần nhớ: một ngày đã vào cửa sổ sẽ ĐÓNG BĂNG như lúc lấy. Data nguồn có sửa lùi (đơn
+# gán thêm sau vài giờ) cũng không được cập nhật. Muốn làm mới cả cửa sổ: Run workflow với days=14.
 #
 # QUAN TRỌNG — workflow này là ĐƯỜNG DUY NHẤT deploy production. `vercel.json` tắt Git
 # auto-deploy cho nhánh main, vì data không nằm trong repo: để Vercel tự build từ Git thì mỗi
@@ -30,9 +37,9 @@ on:
         required: false
         default: ""
       days:
-        description: "Số ngày lấy (kết thúc ở ngày cuối)"
+        description: "Số ngày hỏi BigQuery, kết thúc ở ngày cuối (1 = chỉ hôm qua; 14 = làm mới cả cửa sổ)"
         required: false
-        default: "14"
+        default: "1"
       deploy:
         description: "Deploy Vercel sau khi lấy data"
         type: boolean
@@ -67,14 +74,34 @@ jobs:
           [ "$HAS_VERCEL" = "true" ] || { echo "::error::Thiếu secret VERCEL_TOKEN"; ok=0; }
           [ $ok = 1 ]
 
+      # Xoá mấy file ngày còn commit trong repo trước (chúng chỉ để `npm run dev` local có data),
+      # rồi kéo cửa sổ thật từ production. Thất bại thì bước sau tự chuyển sang lấy 14 ngày.
+      - name: Kéo cửa sổ data đang chạy trên production
+        id: seed
+        env:
+          PROD_URL: https://epic-order-map.vercel.app
+          VERCEL_BYPASS: ${{ secrets.VERCEL_BYPASS }}
+        run: |
+          rm -f public/data/*.csv public/data/manifest.json
+          if node scripts/pull-prod-data.mjs; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Không kéo được data từ production — sẽ hỏi BigQuery trọn 14 ngày thay vì 1."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Lấy data từ BigQuery
         id: fetch
         env:
           BQ_CREDENTIALS_JSON: ${{ secrets.BQ_CREDENTIALS_JSON }}
           IN_TO: ${{ inputs.to }}
-          IN_DAYS: ${{ inputs.days || '14' }}
+          IN_DAYS: ${{ inputs.days || '1' }}
+          SEED_OK: ${{ steps.seed.outputs.ok }}
         run: |
-          args=(--days "$IN_DAYS" --replace-date)
+          days="$IN_DAYS"
+          if [ "$SEED_OK" != "true" ]; then days=14; echo "không có cửa sổ từ production → hỏi BigQuery $days ngày"; fi
+          echo "hỏi BigQuery: $days ngày"
+          args=(--days "$days" --replace-date)
           [ -n "$IN_TO" ] && args+=(--to "$IN_TO")
           set +e
           node scripts/fetch-daily.mjs "${args[@]}"

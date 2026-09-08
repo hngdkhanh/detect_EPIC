@@ -486,7 +486,7 @@ export default function App() {
 
       {dataErr && (
         <div className="data-err" role="alert">
-          ⚠️ {dataErr} Kiểm tra <code>public/data/</code> và <code>manifest.json</code>, hoặc chạy lại <code>npm run append:data</code>.
+          ⚠️ {dataErr} Kiểm tra <code>public/data/</code> và <code>manifest.json</code>, chạy <code>node scripts/pull-prod-data.mjs</code> để kéo 14 ngày từ production về, hoặc <code>npm run append:data</code>.
         </div>
       )}
 
