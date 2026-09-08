@@ -5,7 +5,8 @@ import MapView from "./MapView.jsx";
 import GuideModal from "./GuideModal.jsx";
 import SearchSelect from "./SearchSelect.jsx";
 import ReportView from "./ReportView.jsx";
-import { buildReport, isAbnormal, farOrdersOf, removedDestinations, SCENARIOS } from "./report.js";
+import { buildReport, isAbnormal, farOrdersOf, driverSummaries, removedDestinations, SCENARIOS } from "./report.js";
+import { downloadXlsx, slugify } from "./xlsx.js";
 
 /* Dữ liệu tách theo ngày trong /public/data — app chỉ tải file của ngày đang chọn.
    manifest.json liệt kê các ngày có sẵn; thiếu nó thì rơi về file gộp cũ (LEGACY_CSV). */
@@ -207,6 +208,26 @@ export default function App() {
     () => (view === "report" ? removedDestinations(orders, date, report.table.map(t => t.id), driverInfo) : null),
     [view, orders, date, report, driverInfo],
   );
+  /* Thẻ "Tóm tắt cảnh báo" cuối trang báo cáo: chạy lại detect cho từng tài xế bất thường để có
+     từng đơn xa (Excel) + điểm vẽ mini-map. Phụ thuộc vào DANH SÁCH id chứ không phải `report`
+     — report đổi identity mỗi lần quét xong thêm một ngày lịch sử, còn đơn xa của ngày thì không. */
+  /* Danh bạ cho ô "Tra cứu tài xế" trên báo cáo: mọi id từng xuất hiện trong ngày đang xem
+     hoặc trong lịch sử đã quét (tên/BC ưu tiên dữ liệu ngày hiện tại). */
+  const directory = useMemo(() => {
+    if (view !== "report") return [];
+    const m = new Map();
+    for (const d of Object.keys(history)) for (const r of history[d].rows) m.set(r.id, { id: r.id, name: r.name, bc: r.bc });
+    for (const id of allDrivers) {
+      const info = driverInfo[id] || {};
+      m.set(id, { id, name: info.name || String(id), bc: info.bc || NO_BC });
+    }
+    return [...m.values()].sort((a, b) => a.name.localeCompare(b.name, "vi"));
+  }, [view, history, allDrivers, driverInfo]);
+  const abnIdKey = report.table.map(t => t.id).join(",");
+  const summaries = useMemo(
+    () => (view === "report" && abnIdKey ? driverSummaries(orders, date, report.table) : []),
+    [view, orders, date, abnIdKey], // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
   const [abnPos, setAbnPos] = useState(null);
   function placeAbn() {
@@ -327,6 +348,27 @@ export default function App() {
     a.download = `bao_cao_bat_thuong_EPIC_${date}.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
+  }
+  /* Excel .xlsx cho thẻ tóm tắt: một sheet đơn xa của 1 tài xế (nút "Chi tiết" trên thẻ),
+     hoặc mỗi tài xế một sheet + sheet tổng hợp (nút "Excel tất cả"). File gửi thẳng bưu cục
+     nên cột đặt tên tiếng Việt, khác với CSV kỹ thuật ở trên. */
+  const XLSX_HEADER = ["Ngày", "Bưu cục", "Mã tài xế", "Tài xế", "Mã đơn", "Địa chỉ giao", "Toạ độ", "Cách vùng EPIC (m)", "Ngưỡng (m)", "Kết luận"];
+  const XLSX_WIDTHS = [12, 24, 12, 24, 14, 60, 22, 18, 12, 24];
+  const xlsxRows = s => s.farRows.map(r => [
+    date, s.bc, s.id, s.name, r.order.code, r.order.address, `${r.order.lat},${r.order.lng}`,
+    Math.round(r.dist), Math.round(r.threshold), r.verdict === "B" ? "❓ có thể sai định vị" : "Cảnh báo gán ngoài xa vùng EPIC",
+  ]);
+  function exportDriverXlsx(s) {
+    if (!s || !s.farRows.length) return;
+    downloadXlsx(`canh_bao_gan_ngoai_${slugify(s.name)}_${s.id}_${date}.xlsx`,
+      [{ name: s.name || s.id, header: XLSX_HEADER, rows: xlsxRows(s), widths: XLSX_WIDTHS }]);
+  }
+  function exportAllXlsx() {
+    if (!summaries.length) return;
+    const all = { name: "Tổng hợp", header: ["Bưu cục", "Mã tài xế", "Tài xế", "Số đơn gán ngoài bất thường", "❓ nghi sai định vị"], widths: [28, 12, 28, 26, 20],
+      rows: summaries.map(s => [s.bc, s.id, s.name, s.far, s.maybe]) };
+    const detail = { name: "Chi tiết đơn xa", header: XLSX_HEADER, widths: XLSX_WIDTHS, rows: summaries.flatMap(xlsxRows) };
+    downloadXlsx(`canh_bao_gan_ngoai_bat_thuong_${date}.xlsx`, [all, detail]);
   }
 
   const st = scene.stats;
@@ -451,6 +493,9 @@ export default function App() {
       <main>
         {view === "report" && (
           <ReportView report={report} dates={allDates} histProgress={histProgress} removedDest={removedDest}
+            summaries={summaries} onExportDriverXlsx={exportDriverXlsx} onExportAllXlsx={exportAllXlsx}
+            directory={directory} history={history} onPickDate={setDate}
+            directory={directory} history={history} scanBusy={abnBusy}
             onGoto={gotoAbnormal} onExport={exportReportCsv} onBack={() => setView("map")}
             driverInfoNote={loadingDay ? `Đang tải dữ liệu ngày ${date}…` : null} />
         )}

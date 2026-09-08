@@ -153,10 +153,30 @@ export function buildReport({ rows, skipped, drivers, date, history = {}, dates 
   return { date, kpi, table, byBc, scenarioCounts, hist, far3km, allFarCount: allFar.length, trend, quality, scannedDates };
 }
 
-/* Chạy lại detect cho danh sách tài xế (bất thường) để lấy TỪNG đơn xa — dùng cho xuất CSV
-   và khối "đơn EPIC bị gỡ đi đâu". Cùng logic soát địa chỉ với evalAbnormal. */
-export function farOrdersOf(orders, date, ids) {
-  const want = new Set(ids);
+/* Tra cứu một tài xế qua mọi ngày có dữ liệu: ngày nào bị flag / không / không đánh giá được
+   (không có trong rows đã quét) / chưa quét. `today` là mục của ngày đang xem. */
+export function lookupDriver(id, { dates = [], history = {}, date }) {
+  const days = dates.map(d => {
+    const h = history[d];
+    if (!h || h.failed) return { date: d, status: "pending" };
+    const row = h.rows.find(r => r.id === id);
+    if (!row) return { date: d, status: "na" };
+    return { date: d, status: isAbnormal(row) ? "flag" : "ok", row, scenarios: classify(row) };
+  });
+  const today = days.find(x => x.date === date) || { date, status: "pending" };
+  return {
+    id, days, today,
+    scanned: days.filter(x => x.status !== "pending").length,
+    flagged: days.filter(x => x.status === "flag").length,
+    evaluated: days.filter(x => x.status === "flag" || x.status === "ok").length,
+  };
+}
+
+/* Chạy lại detect cho từng tài xế trong `rows` (bảng bất thường) để lấy TỪNG đơn xa + tập điểm
+   vẽ ảnh bản đồ — dùng cho thẻ "Tóm tắt cảnh báo" (Excel từng tài xế, mini-map) và xuất CSV.
+   Cùng logic soát địa chỉ với evalAbnormal (loại verdict A, giữ B). Giữ thứ tự của `rows`. */
+export function driverSummaries(orders, date, rows) {
+  const want = new Set(rows.map(r => r.id));
   const byDrv = new Map();
   for (const o of orders) {
     if (o.date !== date || !want.has(o.driver)) continue;
@@ -165,19 +185,33 @@ export function farOrdersOf(orders, date, ids) {
     arr.push(o);
   }
   const out = [];
-  for (const [id, dOrders] of byDrv) {
+  for (const t of rows) {
+    const dOrders = byDrv.get(t.id);
+    if (!dOrders) continue;
     const det = D.detect(dOrders, D.suggestParams(dOrders));
     const centerProfile = D.buildCenterProfile(
       dOrders.filter(o => o.epic).concat(det.results.filter(r => !r.far).map(r => r.order)));
+    const farRows = [], points = [];
+    for (const o of dOrders) if (o.epic && o.hasCoord) points.push({ lat: o.lat, lng: o.lng, k: "epic" });
     for (const r of det.results) {
-      if (!r.far) continue;
-      const verdict = D.addrVerdict(r.order, centerProfile);
-      if (verdict === "A") continue;
-      out.push({ driver: id, order: r.order, dist: r.dist, threshold: det.threshold, verdict });
+      const o = r.order;
+      if (!r.far) { points.push({ lat: o.lat, lng: o.lng, k: "near" }); continue; }
+      const verdict = D.addrVerdict(o, centerProfile);
+      if (verdict === "A") continue; // sai định vị chắc chắn → không cảnh báo, không vẽ
+      farRows.push({ driver: t.id, order: o, dist: r.dist, threshold: det.threshold, verdict });
+      points.push({ lat: o.lat, lng: o.lng, k: "far" });
     }
+    farRows.sort((a, b) => b.dist - a.dist);
+    out.push({ id: t.id, name: t.name, bc: t.bc, far: farRows.length, maybe: farRows.filter(r => r.verdict === "B").length, farRows, points });
   }
-  out.sort((a, b) => b.dist - a.dist);
   return out;
+}
+
+/* Mọi đơn xa của các tài xế `ids` trong ngày, gộp một danh sách, xa nhất trước — cho xuất CSV. */
+export function farOrdersOf(orders, date, ids) {
+  return driverSummaries(orders, date, ids.map(id => ({ id })))
+    .flatMap(s => s.farRows)
+    .sort((a, b) => b.dist - a.dist);
 }
 
 /* Đơn EPIC bị gỡ của các tài xế bất thường đi đâu — chỉ có dữ liệu khi export có cột

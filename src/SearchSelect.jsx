@@ -2,7 +2,7 @@
    ↑/↓ di chuyển, Enter chọn, Esc/click ngoài để đóng */
 import { useEffect, useRef, useState } from "react";
 
-const vnorm = s => String(s).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/g, "d");
+export const vnorm = s => String(s).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/g, "d");
 
 export default function SearchSelect({ options, value, onChange, width = 230, placeholder = "Gõ để tìm…" }) {
   const [open, setOpen] = useState(false);

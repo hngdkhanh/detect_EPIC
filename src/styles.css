@@ -370,6 +370,70 @@ main { flex: 1; display: flex; min-height: 0; position: relative; }
 .qual .v { font-family: var(--font-display); font-size: 18px; font-weight: 700; line-height: 1.2; font-variant-numeric: tabular-nums; }
 .qual .l { font-size: 11px; color: var(--text-muted); line-height: 1.4; margin-top: 2px; }
 
+/* tra cứu tài xế: ô nhập + gợi ý + kết quả theo ngày */
+.lookup { display: flex; flex-direction: column; gap: 10px; }
+.lk-input { position: relative; display: flex; align-items: center; gap: 4px; max-width: 520px; }
+.lk-input input {
+  flex: 1; font: inherit; font-size: 13px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--background); color: var(--text-primary); outline: none;
+}
+.lk-input input:focus { border-color: var(--accent); }
+.lk-pop { top: calc(100% + 4px); left: 0; right: 0; width: auto; }
+.lk-result { border: 1px solid var(--border); border-radius: 12px; padding: 12px; background: var(--surface); display: flex; flex-direction: column; gap: 10px; }
+.lk-result.bad { border-color: var(--red-600); }
+.lk-result.good { border-color: #0a7a2f; }
+.lk-head { display: flex; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+.lk-nm { font-size: 14px; font-weight: 700; }
+.lk-verdict { margin-left: auto; font-size: 13px; font-weight: 500; }
+.lk-result.bad .lk-verdict { color: var(--red-700); }
+.lk-result.good .lk-verdict { color: #0a7a2f; }
+.lk-verdict b { font-size: 16px; }
+.lk-days { display: flex; gap: 4px; flex-wrap: wrap; }
+.lk-day {
+  font: inherit; display: flex; flex-direction: column; align-items: center; gap: 1px; min-width: 46px;
+  padding: 4px 6px; border: 1px solid var(--border); border-radius: 8px; background: var(--background); cursor: pointer;
+}
+.lk-day:hover { border-color: var(--accent); }
+.lk-day.cur { outline: 2px solid var(--accent); outline-offset: 1px; }
+.lk-day .lk-d { font-size: 10px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.lk-day .lk-i { font-size: 13px; line-height: 1.2; }
+.lk-day .lk-f { font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.lk-day.flag { background: var(--red-100); border-color: var(--red-200); }
+.lk-day.flag .lk-f { color: var(--red-700); }
+.lk-day.ok { background: var(--success-bg); }
+.lk-day.ok .lk-f { color: #0a7a2f; }
+.lk-day.na, .lk-day.pending { opacity: 0.6; }
+.lk-day.pending { border-style: dashed; }
+.lk-table { max-height: 320px; }
+.lk-table tr.flag td { background: var(--red-100); }
+
+/* tóm tắt cảnh báo gửi bưu cục — thẻ theo template tin nhắn + mini-map tile Esri */
+.sum-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.sum-bar-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.sum-bar-actions .filebtn:disabled { opacity: 0.6; cursor: default; }
+.sum-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+.sum-card {
+  border: 1px solid var(--border); border-radius: 12px; padding: 12px;
+  background: var(--surface); display: flex; flex-direction: column; gap: 4px; min-width: 0;
+}
+.sum-title { font-family: var(--font-display); font-size: 13px; font-weight: 700; color: var(--red-700); text-transform: uppercase; letter-spacing: 0.02em; }
+.sum-who { font-size: 13px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; }
+.sum-nm { color: var(--text-primary); font-weight: 700; }
+.sum-n { font-size: 12px; }
+.sum-n b { font-size: 16px; color: var(--red-600); font-variant-numeric: tabular-nums; }
+.sum-row { display: flex; align-items: center; gap: 6px; font-size: 12px; flex-wrap: wrap; margin: 2px 0 6px; }
+.filebtn.sm { padding: 3px 8px; font-size: 11px; }
+.minimap { position: relative; overflow: hidden; border-radius: 8px; border: 1px solid var(--border); background: var(--background); }
+.minimap img { position: absolute; width: 256px; height: 256px; -webkit-user-select: none; user-select: none; pointer-events: none; }
+.minimap svg { position: absolute; inset: 0; }
+.minimap .attr { position: absolute; right: 4px; bottom: 2px; font-size: 9px; color: #333; background: rgba(255, 255, 255, 0.75); padding: 0 4px; border-radius: 3px; }
+.mm-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--text-muted); }
+.mm-legend { font-size: 11px; color: var(--text-muted); display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.mm-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; border: 1px solid #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.15); vertical-align: -1px; }
+.mm-dot.epic { background: var(--map-good); }
+.mm-dot.near { background: var(--map-near); }
+.mm-dot.far { background: var(--map-far); }
+
 /* ---- bản đồ + panel nổi ---- */
 #mapwrap { flex: 1; min-width: 0; position: relative; display: flex; }
 #map { flex: 1; background: var(--surface); }
