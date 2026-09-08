@@ -137,9 +137,18 @@ jobs:
           echo "GET /v2/user -> HTTP $u"
           if [ "$u" = 200 ]; then
             node -e 'const j=require(process.env.RUNNER_TEMP+"/user.json");const u=j.user||j;console.log("  token thuoc account:",u.username||u.name||"?","|",u.email||"")'
+          elif [ "$u" = 404 ]; then
+            # Đã gặp thật 2026-09-08: token 60 ký tự, thấy project (200) nhưng /v2/user trả 404.
+            # Đó là token cấp ở Team/Project Settings, thuộc team chứ không thuộc user. Vercel CLI
+            # luôn phải phân giải user trước, nên mọi lệnh của nó chết ở "Could not retrieve
+            # Project Settings" dù token có quyền trên project. Chặn tại đây cho khỏi mất công.
+            echo "  than loi: $(head -c 300 "$RUNNER_TEMP/user.json")"
+            echo "::error::VERCEL_TOKEN không phải Personal Access Token — nó không gắn với user nào (do dai $n; token ca nhan dai 24). Vercel CLI bat buoc phai phan giai user, nen token cap o Team/Project Settings se khong dung duoc du co quyen tren project. Tao token o https://vercel.com/account/tokens (Account Settings -> Tokens), scope chon team so huu project, roi cap nhat secret VERCEL_TOKEN."
+            exit 1
           else
             echo "  than loi: $(head -c 300 "$RUNNER_TEMP/user.json")"
-            echo "  (404 o day = token khong gan voi user nao, thuong la token cua team khac)"
+            echo "::error::VERCEL_TOKEN không dùng được (HTTP $u; 403 = token sai hoac da bi thu hoi). Tao lai o https://vercel.com/account/tokens."
+            exit 1
           fi
 
           p=$(curl -sS -o "$RUNNER_TEMP/prj.json" -w '%{http_code}' \
