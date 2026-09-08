@@ -92,6 +92,8 @@ jobs:
         if: steps.fetch.outputs.code == '0'
         env:
           IN_TO: ${{ inputs.to }}
+          EVENT: ${{ github.event_name }}
+          WANT_DEPLOY: ${{ inputs.deploy }}
         run: |
           node -e '
             const m = require("./public/data/manifest.json");
@@ -102,22 +104,56 @@ jobs:
             console.log("manifest:", m.dates.join(", "));
             console.log("ngay moi nhat:", latest, "| can co:", want);
             const ok = latest === want;
-            require("fs").appendFileSync(process.env.GITHUB_OUTPUT, `ok=${ok}\n`);
             if (!ok) console.log("::warning::Chua co data " + want + " — bo qua deploy, production giu data cu.");
+            // workflow_dispatch: theo ô "deploy" người chạy chọn. schedule/push: luôn deploy.
+            const deploy = ok && (process.env.EVENT !== "workflow_dispatch" || process.env.WANT_DEPLOY === "true");
+            console.log("se deploy:", deploy);
+            require("fs").appendFileSync(process.env.GITHUB_OUTPUT, `ok=${ok}\ndeploy=${deploy}\n`);
           '
 
-      # workflow_dispatch: theo ô "deploy" người chạy chọn. schedule/push: luôn deploy.
-      - name: Deploy Vercel
-        if: steps.gate.outputs.ok == 'true' && (github.event_name != 'workflow_dispatch' || inputs.deploy)
+      # Cài một lần thay vì npx 3 lần (npx tải lại CLI mỗi lệnh, ~15s/lần).
+      # Ghim major để bản CLI mới không đổi hành vi giữa hai đêm.
+      - name: Cài Vercel CLI
+        if: steps.gate.outputs.deploy == 'true'
+        run: npm i -g vercel@59
+
+      # Lỗi "Could not retrieve Project Settings" hầu như luôn là token thuộc account khác
+      # account sở hữu project. Bước này in ra account của token để thấy ngay, thay vì
+      # đoán giữa token sai / org id sai / project id sai.
+      - name: Kiểm tra token Vercel
+        if: steps.gate.outputs.deploy == 'true'
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
-          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN"
-          npx --yes vercel@latest build --prod --token="$VERCEL_TOKEN"
-          url=$(npx --yes vercel@latest deploy --prebuilt --prod --token="$VERCEL_TOKEN")
+          set +e
+          out=$(vercel whoami --token="$VERCEL_TOKEN" 2>&1)
+          code=$?
+          set -e
+          echo "$out" | tail -3
+          if [ $code -ne 0 ]; then
+            echo "::error::VERCEL_TOKEN không dùng được (có thể đã bị xoá hoặc hết hạn). Tạo token mới ở https://vercel.com/account/tokens."
+            exit 1
+          fi
+          echo "--- team mà token này thấy được:"
+          vercel teams ls --token="$VERCEL_TOKEN" 2>&1 | tail -8
+          echo "--- project cần deploy nằm ở org: $VERCEL_ORG_ID"
+
+      - name: Deploy Vercel
+        if: steps.gate.outputs.deploy == 'true'
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          if ! vercel pull --yes --environment=production --token="$VERCEL_TOKEN"; then
+            echo "::error::Vercel không lấy được Project Settings. Token phải thuộc đúng account/team sở hữu project epic-order-map (org $VERCEL_ORG_ID, project $VERCEL_PROJECT_ID). Xem bước 'Kiểm tra token Vercel' ở trên: nếu account in ra không phải chủ project, tạo lại token ở https://vercel.com/account/tokens với scope là team đó rồi cập nhật secret VERCEL_TOKEN."
+            exit 1
+          fi
+          vercel build --prod --token="$VERCEL_TOKEN"
+          url=$(vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN")
           echo "deploy: $url"
-          echo "### Deployed" >> "$GITHUB_STEP_SUMMARY"
-          echo "$url" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### Deployed"
+            echo "$url"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Tóm tắt
         if: always()
