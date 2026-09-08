@@ -107,16 +107,34 @@ const sql = buildSql(dateFrom, dateTo);
    Backend 1 — REST API (credential JSON)
    ===================================================================================== */
 
-function loadCredential() {
-  if (process.env.BQ_CREDENTIALS_JSON) {
-    try { return JSON.parse(process.env.BQ_CREDENTIALS_JSON); }
-    catch (e) { fail(`BQ_CREDENTIALS_JSON không phải JSON hợp lệ: ${e.message}`); }
+/* Dán credential từ Windows rất dễ dính BOM (clip.exe thêm U+FEFF) hoặc khoảng trắng hai đầu —
+   JSON.parse sẽ chết với thông báo tối nghĩa. Cắt trước khi parse. */
+const cleanJson = (s) => s.replace(/^﻿/, "").trim();
+
+function parseCred(text, label) {
+  const t = cleanJson(text);
+  let j;
+  try { j = JSON.parse(t); }
+  catch (e) {
+    fail(`${label} không phải JSON hợp lệ: ${e.message}\n` +
+         `   Dán NGUYÊN nội dung file .json (bắt đầu bằng "{", kết thúc bằng "}"), không thêm dấu nháy.`);
   }
+  if (!j || typeof j !== "object") fail(`${label} phải là một object JSON.`);
+  const need = j.type === "service_account" ? ["client_email", "private_key"]
+             : j.type === "authorized_user" ? ["client_id", "client_secret", "refresh_token"]
+             : null;
+  if (!need) fail(`${label}: type "${j.type}" chưa hỗ trợ (cần service_account hoặc authorized_user).`);
+  const miss = need.filter((k) => !j[k]);
+  if (miss.length) fail(`${label} (${j.type}) thiếu field: ${miss.join(", ")}.`);
+  return j;
+}
+
+function loadCredential() {
+  if (process.env.BQ_CREDENTIALS_JSON) return parseCred(process.env.BQ_CREDENTIALS_JSON, "BQ_CREDENTIALS_JSON");
   const p = process.env.GOOGLE_APPLICATION_CREDENTIALS;
   if (p) {
     if (!fs.existsSync(p)) fail(`GOOGLE_APPLICATION_CREDENTIALS trỏ tới file không tồn tại: ${p}`);
-    try { return JSON.parse(fs.readFileSync(p, "utf8")); }
-    catch (e) { fail(`File credential không phải JSON hợp lệ: ${e.message}`); }
+    return parseCred(fs.readFileSync(p, "utf8"), `File credential ${p}`);
   }
   return null;
 }
