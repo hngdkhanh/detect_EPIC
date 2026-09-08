@@ -117,26 +117,43 @@ jobs:
         if: steps.gate.outputs.deploy == 'true'
         run: npm i -g vercel@59
 
-      # Lỗi "Could not retrieve Project Settings" hầu như luôn là token thuộc account khác
-      # account sở hữu project. Bước này in ra account của token để thấy ngay, thay vì
-      # đoán giữa token sai / org id sai / project id sai.
+      # Gọi thẳng REST API thay vì `vercel whoami`, vì CLI gộp mọi lỗi thành một câu tối nghĩa
+      # ("User not found" khi token hợp lệ nhưng không thấy account/team). Mã HTTP của từng
+      # endpoint phân biệt được ngay: token sai (403) vs không thuộc team (403/404 ở project).
+      # Không in token; GitHub cũng tự che. Chỉ in độ dài để phát hiện dán thiếu/lẫn khoảng trắng.
       - name: Kiểm tra token Vercel
         if: steps.gate.outputs.deploy == 'true'
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
-          set +e
-          out=$(vercel whoami --token="$VERCEL_TOKEN" 2>&1)
-          code=$?
-          set -e
-          echo "$out" | tail -3
-          if [ $code -ne 0 ]; then
-            echo "::error::VERCEL_TOKEN không dùng được (có thể đã bị xoá hoặc hết hạn). Tạo token mới ở https://vercel.com/account/tokens."
+          n=${#VERCEL_TOKEN}
+          echo "do dai VERCEL_TOKEN: $n ky tu (token Vercel thuong 24; lech nhieu = dan thieu hoac lan khoang trang)"
+          case "$VERCEL_TOKEN" in
+            *[[:space:]]*) echo "::warning::Token co chua khoang trang/newline — dan lai cho sach." ;;
+          esac
+
+          u=$(curl -sS -o "$RUNNER_TEMP/user.json" -w '%{http_code}' \
+                -H "Authorization: Bearer $VERCEL_TOKEN" https://api.vercel.com/v2/user || echo 000)
+          echo "GET /v2/user -> HTTP $u"
+          if [ "$u" = 200 ]; then
+            node -e 'const j=require(process.env.RUNNER_TEMP+"/user.json");const u=j.user||j;console.log("  token thuoc account:",u.username||u.name||"?","|",u.email||"")'
+          else
+            echo "  than loi: $(head -c 300 "$RUNNER_TEMP/user.json")"
+            echo "  (404 o day = token khong gan voi user nao, thuong la token cua team khac)"
+          fi
+
+          p=$(curl -sS -o "$RUNNER_TEMP/prj.json" -w '%{http_code}' \
+                -H "Authorization: Bearer $VERCEL_TOKEN" \
+                "https://api.vercel.com/v9/projects/$VERCEL_PROJECT_ID?teamId=$VERCEL_ORG_ID" || echo 000)
+          echo "GET /v9/projects/$VERCEL_PROJECT_ID -> HTTP $p"
+          if [ "$p" = 200 ]; then
+            node -e 'const j=require(process.env.RUNNER_TEMP+"/prj.json");console.log("  project:",j.name,"| id:",j.id)'
+            echo "Token OK — thay duoc project, deploy duoc."
+          else
+            echo "  than loi: $(head -c 300 "$RUNNER_TEMP/prj.json")"
+            echo "::error::Token khong truy cap duoc project epic-order-map. Token phai thuoc account la thanh vien cua team $VERCEL_ORG_ID (chu so huu project). Vao https://vercel.com/account/tokens, kiem tra goc tren phai dang dang nhap bang dung account do, tao token moi voi scope la team do, roi cap nhat secret VERCEL_TOKEN."
             exit 1
           fi
-          echo "--- team mà token này thấy được:"
-          vercel teams ls --token="$VERCEL_TOKEN" 2>&1 | tail -8
-          echo "--- project cần deploy nằm ở org: $VERCEL_ORG_ID"
 
       - name: Deploy Vercel
         if: steps.gate.outputs.deploy == 'true'
