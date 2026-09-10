@@ -10,6 +10,12 @@ Tổng thời gian ~25 phút, phần lớn là chờ Supabase tạo project và 
 Đã kiểm tra sẵn trên máy này: Node 24, Vercel CLI 59 đã đăng nhập (`duckhanh07102004`), Docker.
 Chưa có `gh` CLI → GitHub Secrets làm qua web. Repo: `EPIC-GHN/detect_EPIC`, nhánh `main`.
 
+> **Đã tạo project theo bản hướng dẫn sáng 10/09 rồi?** Chỉ cần một việc: mở SQL Editor, dán lại
+> **toàn bộ** `supabase/schema.sql` bản mới, Run. File idempotent: phần đã có bị bỏ qua, phần mới
+> thêm hai hàm `day_csv()` / `order_dates()` và nới các cột text về nullable. Không chạy thì app vẫn
+> hoạt động nhưng tải một ngày mất ~5 s và mở trang mất ~2–5 s, thay vì ~1 s và ~0,1 s (đo 10/09
+> trên ngày 35k dòng). Xong rồi tải lại trang, kiểm ở bước 4 mục 3.
+
 ---
 
 ## 1. Tạo project Supabase và chạy schema (~7 phút, phần lớn là chờ)
@@ -125,9 +131,10 @@ Mở http://localhost:5173 và kiểm ba thứ:
 
 1. Dropdown **Ngày** có 14 ngày, mặc định là ngày mới nhất.
 2. Bản đồ có chấm đơn, chọn bưu cục và tài xế hoạt động bình thường.
-3. F12 → **Network**, gõ `supabase` vào ô filter: phải thấy `order_days?select=…` (200) và một hoặc
-   nhiều `orders?select=…` (200 hoặc 206). Một ngày 25k dòng sẽ chia thành nhiều request 1000 dòng —
-   đó là bình thường, không phải lỗi.
+3. F12 → **Network**, gõ `supabase` vào ô filter: phải thấy đúng hai loại request, `rpc/order_dates`
+   lúc mở trang và `rpc/day_csv?d=…` mỗi lần đổi ngày, đều 200, mỗi cái dưới ~1 s. Nếu thay vào đó
+   là `order_days?select=…` rồi hàng chục request `orders?select=…` 1000 dòng một: Supabase chưa có
+   hai hàm mới, quay lại bước 1.4 chạy lại `schema.sql`. App vẫn chạy ở chế độ đó, chỉ chậm gấp 5 lần.
 
 Trang trống mà Console in `Supabase không trả được danh sách ngày` → xem lại bảng lỗi ở bước 2
 (thường là RLS policy chưa chạy, hoặc anon key sai).

@@ -23,9 +23,19 @@ qua PostgREST (`Prefer: resolution=merge-duplicates`), `--replace-date` = upsert
 có `fetched_at` cũ hơn mốc lần chạy (app đang mở không bao giờ thấy ngày rỗng), giữ `SUPABASE_KEEP_DAYS`
 ngày gần nhất theo ngày có trong bảng (mặc định **90**). Env: `SUPABASE_URL` + `SUPABASE_SERVICE_KEY`
 (service_role, bỏ qua RLS — chỉ CI/máy admin). Client `src/supa.js` (zero-dep, không supabase-js) đọc
-`VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY`, `fetchDays()` từ view, `fetchDayCsv(date)` lấy `text/csv`
-theo trang bằng header `Range` + `Content-Range` (Supabase `max_rows` mặc định 1000, một ngày 15–40k dòng)
-rồi App vẫn parse bằng `loadOrders`. Đã test bằng mock PostgREST 2026-09-10, chưa chạy trên project thật.
+`VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY` và có **hai đường, RPC trước, trang sau**: `fetchDays()` gọi
+RPC `order_dates()` (CTE đệ quy dò index, ms) rồi mới rơi về view `order_days` (group by cả bảng, 1–5 s
+trên Free); `fetchDayCsv(date)` gọi RPC `day_csv(d)` (Postgres `string_agg` cả ngày thành MỘT chuỗi CSV,
+PostgREST trả về dạng JSON string → `JSON.parse`) rồi mới rơi về `orders` `text/csv` theo trang `Range` +
+`Content-Range`, tải song song 8 trang. Rơi về khi RPC trả 404 (schema chưa có hàm) và nhớ trong phiên.
+Số đo 2026-09-10 trên project thật (Free, Singapore, ngày 35k dòng): trang tuần tự 14,5 s → song song
+~5 s (nút thắt là server sort mỗi trang, 8/16/35 kết nối như nhau) → RPC ~0,5–1 s. **Quirk PostgREST
+đã gặp:** `max_rows` kẹp 1000 dù xin 10000 (đọc `Content-Range`); hàm trả `text` không có media type
+`text/plain` (406 PGRST107) nên nhận JSON; `text/csv` nhân đôi backslash trong dữ liệu (139/29630 dòng
+địa chỉ) còn `day_csv()` thì không. Đã kiểm chứng bằng Postgres 15 + PostgREST trong Docker với file
+ngày thật, so từng field sau `loadOrders`: RPC giống hệt file gốc. Lưu ý lịch sử: schema bản đầu để
+cột text `not null`, COPY/Import CSV của Supabase đọc ô trống thành NULL và bị từ chối → bản hiện tại
+nullable + `alter ... drop not null` cho project cũ.
 
 `scripts/append-data.mjs` (`npm run append:data`) là writer của **chế độ file cũ** (fallback / dev offline):
 đọc một CSV (đường dẫn truyền vào, hoặc export BigQuery mới nhất trong `~/Downloads`), validate header 10

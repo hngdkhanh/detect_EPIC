@@ -87,10 +87,17 @@ scripts/push-supabase.mjs     writer: upsert CSV vào orders, giữ SUPABASE_KEE
 public/drivers.csv            mapping tài xế → bưu cục (ghi đè tên/BC của data chính) — vẫn là file tĩnh
 ```
 
-App chỉ tải đơn của **ngày đang chọn**, không tải cả kho: PostgREST trả thẳng `text/csv` theo trang
-(header `Range`, đọc `Content-Range` để biết tổng — không phụ thuộc `max_rows` của project), rồi vẫn
-parse bằng `loadOrders` như file. Cache 3 ngày gần nhất trong RAM. Bưu cục và tài xế đang chọn
-**không** bị reset khi đổi ngày. Trang Báo cáo quét các ngày khác cũng qua đường này.
+App chỉ tải đơn của **ngày đang chọn**, không tải cả kho, và vẫn parse bằng `loadOrders` như file.
+`src/supa.js` có hai đường, thử theo thứ tự:
+
+| Đường | Cách | Đo 10/09, ngày 35k dòng, gói Free Singapore |
+| --- | --- | --- |
+| **RPC** `day_csv(d)` + `order_dates()` | Postgres ghép cả ngày thành một chuỗi CSV, **một request**; danh sách ngày dò index | mở trang ~0,1 s · một ngày ~0,5–1 s |
+| Trang `orders` + view `order_days` (lùi) | PostgREST kẹp `max_rows` = 1000 → 35 trang, tải song song 8 trang một | mở trang 1–5 s · một ngày ~5 s (tuần tự là 14,5 s) |
+
+Đường RPC cần đã chạy phần "Tăng tốc đọc" cuối `supabase/schema.sql`; chưa có thì client nhận 404
+và tự rơi về đường lùi, không vỡ. Cache 3 ngày gần nhất trong RAM. Bưu cục và tài xế đang chọn
+**không** bị reset khi đổi ngày. Trang Báo cáo quét các ngày khác cũng qua đường này, mỗi ngày một request.
 
 Thứ tự nguồn khi app khởi động: Supabase (có `VITE_SUPABASE_*` lúc build) → `public/data/manifest.json`
 (chế độ file, dev không có Supabase) → `public/test.csv` (file gộp cũ; cũng là đường nút
