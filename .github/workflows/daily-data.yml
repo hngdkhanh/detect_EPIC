@@ -3,7 +3,7 @@
 #
 # Repo KHÔNG lưu data, mỗi lần chạy là một máy trắng. Cửa sổ 14 ngày là trạng thái, và trạng thái
 # đó nằm ở chính bản deploy đang chạy (scripts/pull-prod-data.mjs kéo về). Nhờ vậy BigQuery chỉ
-# quét ~6 GB/ngày thay vì ~8 GB, và repo không phình. Không kéo được từ production (sập, đổi
+# quét ~2 GB/ngày thay vì ~8 GB, và repo không phình. Không kéo được từ production (sập, đổi
 # domain, bật Deployment Protection mà chưa có VERCEL_BYPASS) thì rơi về lấy trọn 14 ngày từ
 # BigQuery như trước — chậm và tốn hơn nhưng vẫn ra đúng kết quả.
 #

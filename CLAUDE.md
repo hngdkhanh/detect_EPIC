@@ -46,7 +46,7 @@ cũ và từng làm production tụt data khi Vercel tự deploy từ Git. Dev l
 **Tự động hoá chính là GitHub Actions** (`.github/workflows/daily-data.yml`, 03:00 UTC = 10:00 VN,
 user chọn hướng "máy tắt vẫn chạy" 2026-09-08), **cửa sổ lăn**: `pull-prod-data.mjs` kéo 14 ngày đang
 chạy trên production về → `fetch-daily.mjs --days 2 --replace-date` hỏi BigQuery D-1 + D-2 (REST, secret
-`BQ_CREDENTIALS_JSON`, ~6 GB) → `append-data` ghép + bỏ ngày cũ nhất → gate manifest có D-1 →
+`BQ_CREDENTIALS_JSON`, ~2 GB) → `append-data` ghép + bỏ ngày cũ nhất → gate manifest có D-1 →
 `vercel pull/build/deploy --prebuilt --prod` (secret `VERCEL_TOKEN`, org/project id ghi thẳng trong yml).
 **CI không commit data**; trạng thái 14 ngày nằm ở bản deploy đang chạy. Kéo production thất bại →
 tự rơi về `--days 14` (~8 GB). **Lấy chồng 2 ngày** (user chốt 2026-09-10, sau khi 2026-09-08 chọn D-1-only)

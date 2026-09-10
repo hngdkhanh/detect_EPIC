@@ -136,7 +136,7 @@ Hai đường vận hành, cùng một script:
 `.github/workflows/daily-data.yml` chạy 10:00 VN mỗi ngày trên GitHub, theo kiểu **cửa sổ lăn**:
 
 1. `pull-prod-data.mjs` kéo 14 ngày đang chạy trên production về (34 MB, vài giây).
-2. `fetch-daily.mjs --days 2` hỏi BigQuery **hai ngày gần nhất, D-1 và D-2** (~6 GB quét, ~40 giây).
+2. `fetch-daily.mjs --days 2` hỏi BigQuery **hai ngày gần nhất, D-1 và D-2** (~2 GB quét, ~25 giây).
 3. `append-data --replace-date` ghép vào, bỏ ngày cũ nhất ra khỏi cửa sổ 14 ngày.
 4. `vercel pull/build/deploy --prebuilt --prod`.
 
