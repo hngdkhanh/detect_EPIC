@@ -345,7 +345,12 @@ function runBq({ dryRun: dry }) {
 const cred = loadCredential();
 console.log(`🗓  Ngày     : ${dateFrom}${dateTo !== dateFrom ? " → " + dateTo : ""} (giờ VN)`);
 console.log(`☁️  Project  : ${PROJECT}`);
-console.log(`🔧 Backend  : ${cred ? `REST API (${cred.type}${cred.account ? " " + cred.account : cred.client_email ? " " + cred.client_email : ""})` : "bq CLI"}`);
+/* Vân tay credential: 8 hex đầu của SHA-256 refresh_token / private_key. KHÔNG lộ bí mật, nhưng
+   so được "secret trên CI có đúng là credential mình vừa tạo không" — câu hỏi không có cách nào
+   khác để trả lời, vì GitHub che secret và không cho đọc lại. */
+const credFp = (c) =>
+  crypto.createHash("sha256").update(String(c.refresh_token || c.private_key || "")).digest("hex").slice(0, 8);
+console.log(`🔧 Backend  : ${cred ? `REST API (${cred.type}${cred.account ? " " + cred.account : cred.client_email ? " " + cred.client_email : ""}, vân tay ${credFp(cred)})` : "bq CLI"}`);
 
 if (dryRun) {
   const { bytes } = cred ? await runRest(cred, { dryRun: true }) : runBq({ dryRun: true });
