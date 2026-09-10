@@ -73,7 +73,7 @@ if ($SkipFetch) {
     # public/data/ khong con trong git nen may moi clone se trong; khong keo duoc thi lay tron 14 ngay.
     Log "node scripts/pull-prod-data.mjs ..."
     & node (Join-Path $PSScriptRoot 'pull-prod-data.mjs') 2>&1 | ForEach-Object { Log "  pull  | $_" }
-    $fetchArgs = @('--days', '1', '--replace-date')
+    $fetchArgs = @('--days', '2', '--replace-date')   # D-1 + D-2: data nguon sua lui, lay chong 1 ngay
     if ($LASTEXITCODE -ne 0) {
       Log "khong keo duoc data tu production — hoi BigQuery tron 14 ngay" 'WARN'
       $fetchArgs = @('--days', '14', '--replace-date')

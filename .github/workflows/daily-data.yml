@@ -1,14 +1,17 @@
-# Mỗi sáng: kéo cửa sổ 14 ngày đang chạy trên production về → hỏi BigQuery ĐÚNG NGÀY HÔM QUA →
-# ghép vào, bỏ ngày cũ nhất → build → deploy Vercel. Chạy trên GitHub, không cần máy user.
+# Mỗi sáng: kéo cửa sổ 14 ngày đang chạy trên production về → hỏi BigQuery KHOẢNG 2 NGÀY (D-1 và
+# D-2) → ghép vào, bỏ ngày cũ nhất → build → deploy Vercel. Chạy trên GitHub, không cần máy user.
 #
 # Repo KHÔNG lưu data, mỗi lần chạy là một máy trắng. Cửa sổ 14 ngày là trạng thái, và trạng thái
 # đó nằm ở chính bản deploy đang chạy (scripts/pull-prod-data.mjs kéo về). Nhờ vậy BigQuery chỉ
-# quét ~3 GB/ngày thay vì ~8 GB, và repo không phình. Không kéo được từ production (sập, đổi
+# quét ~6 GB/ngày thay vì ~8 GB, và repo không phình. Không kéo được từ production (sập, đổi
 # domain, bật Deployment Protection mà chưa có VERCEL_BYPASS) thì rơi về lấy trọn 14 ngày từ
 # BigQuery như trước — chậm và tốn hơn nhưng vẫn ra đúng kết quả.
 #
-# Hệ quả cần nhớ: một ngày đã vào cửa sổ sẽ ĐÓNG BĂNG như lúc lấy. Data nguồn có sửa lùi (đơn
-# gán thêm sau vài giờ) cũng không được cập nhật. Muốn làm mới cả cửa sổ: Run workflow với days=14.
+# Vì sao 2 ngày chứ không phải 1 (user chốt 2026-09-10): data nguồn sửa lùi — đơn được gán thêm
+# vài giờ sau, nên D-1 lấy lúc 10:00 sáng vẫn thiếu. Lấy chồng 2 ngày thì mỗi ngày được lấy hai
+# lần: một lần làm D-1, hôm sau một lần nữa làm D-2 (`--replace-date` ghi đè cả ngày). Sau lượt
+# thứ hai ngày đó mới ĐÓNG BĂNG. Lỡ một buổi sáng cũng tự vá được. Muốn làm mới cả cửa sổ:
+# Run workflow với days=14.
 #
 # QUAN TRỌNG — workflow này là ĐƯỜNG DUY NHẤT deploy production. `vercel.json` tắt Git
 # auto-deploy cho nhánh main, vì data không nằm trong repo: để Vercel tự build từ Git thì mỗi
@@ -37,9 +40,9 @@ on:
         required: false
         default: ""
       days:
-        description: "Số ngày hỏi BigQuery, kết thúc ở ngày cuối (1 = chỉ hôm qua; 14 = làm mới cả cửa sổ)"
+        description: "Số ngày hỏi BigQuery, kết thúc ở ngày cuối (2 = mặc định, D-1 + D-2; 14 = làm mới cả cửa sổ)"
         required: false
-        default: "1"
+        default: "2"
       deploy:
         description: "Deploy Vercel sau khi lấy data"
         type: boolean
@@ -86,7 +89,7 @@ jobs:
           if node scripts/pull-prod-data.mjs; then
             echo "ok=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::warning::Không kéo được data từ production — sẽ hỏi BigQuery trọn 14 ngày thay vì 1."
+            echo "::warning::Không kéo được data từ production — sẽ hỏi BigQuery trọn 14 ngày thay vì 2."
             echo "ok=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -95,7 +98,7 @@ jobs:
         env:
           BQ_CREDENTIALS_JSON: ${{ secrets.BQ_CREDENTIALS_JSON }}
           IN_TO: ${{ inputs.to }}
-          IN_DAYS: ${{ inputs.days || '1' }}
+          IN_DAYS: ${{ inputs.days || '2' }}
           SEED_OK: ${{ steps.seed.outputs.ok }}
         run: |
           days="$IN_DAYS"

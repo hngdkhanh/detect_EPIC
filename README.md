@@ -136,7 +136,7 @@ Hai đường vận hành, cùng một script:
 `.github/workflows/daily-data.yml` chạy 10:00 VN mỗi ngày trên GitHub, theo kiểu **cửa sổ lăn**:
 
 1. `pull-prod-data.mjs` kéo 14 ngày đang chạy trên production về (34 MB, vài giây).
-2. `fetch-daily.mjs --days 1` hỏi BigQuery **đúng ngày hôm qua** (~3 GB quét, ~25 giây).
+2. `fetch-daily.mjs --days 2` hỏi BigQuery **hai ngày gần nhất, D-1 và D-2** (~6 GB quét, ~40 giây).
 3. `append-data --replace-date` ghép vào, bỏ ngày cũ nhất ra khỏi cửa sổ 14 ngày.
 4. `vercel pull/build/deploy --prebuilt --prod`.
 
@@ -144,9 +144,10 @@ Repo **không lưu data**; trạng thái 14 ngày nằm ở chính bản deploy 
 production (sập, đổi domain, bật Deployment Protection mà chưa đặt secret `VERCEL_BYPASS`) thì
 workflow tự rơi về hỏi BigQuery trọn 14 ngày (~8 GB, ~1 phút), vẫn ra đúng kết quả.
 
-Hệ quả cần nhớ: một ngày đã vào cửa sổ sẽ **đóng băng** như lúc lấy. Data nguồn có sửa lùi (đơn
-gán thêm sau vài giờ) cũng không được cập nhật. Muốn làm mới cả cửa sổ: **Run workflow** với
-`days` = 14.
+Lấy chồng 2 ngày vì **data nguồn sửa lùi**: đơn được gán thêm vài giờ sau, nên bản D-1 lấy lúc
+10:00 sáng vẫn thiếu. Mỗi ngày do đó được lấy hai lần — một lần làm D-1, sáng hôm sau một lần nữa
+làm D-2 — rồi mới **đóng băng**. Lỡ một buổi sáng (máy chạy lỗi, BigQuery chưa có data) cũng tự vá
+ở lượt kế. Muốn làm mới cả cửa sổ: **Run workflow** với `days` = 14.
 
 Secrets cần thêm một lần (Settings → Secrets and variables → Actions):
 
@@ -182,7 +183,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\register-deploy-task.ps1 -Unr
 | Chỉ lấy data D-1 (bq CLI) | `npm run fetch:data` |
 | Lấy lại một ngày / backfill | `node scripts/fetch-daily.mjs --date 2026-09-01 --to 2026-09-05` |
 | Kéo data production về máy (dev local có đủ 14 ngày) | `node scripts/pull-prod-data.mjs` |
-| Đúng như CI làm mỗi sáng | `node scripts/pull-prod-data.mjs && node scripts/fetch-daily.mjs --days 1 --replace-date` |
+| Đúng như CI làm mỗi sáng | `node scripts/pull-prod-data.mjs && node scripts/fetch-daily.mjs --days 2 --replace-date` |
 | Làm mới cả cửa sổ từ BigQuery | `node scripts/fetch-daily.mjs --days 14 --replace-date` |
 | Thử chuỗi local, không deploy | `.\scripts\daily-deploy.ps1 -NoDeploy` |
 | Deploy tay dù data chưa mới | `.\scripts\daily-deploy.ps1 -SkipFetch -Force` |
