@@ -115,6 +115,11 @@ jobs:
             echo "::warning::BigQuery chưa có dòng nào cho khoảng ngày yêu cầu — bỏ qua deploy."
             exit 0
           fi
+          # Nguyên nhân số 1 khi bước này đỏ: credential BigQuery hết hạn. Nói luôn cách phân biệt,
+          # vì lỗi này đứng im 2 ngày (2026-09-08 → 10) mà không ai biết production đang cũ.
+          if [ "$code" != 0 ]; then
+            echo "::error::Lấy data thất bại. Nếu log ở trên có 'invalid_rapt': secret BQ_CREDENTIALS_JSON là refresh token cá nhân và đã hết hạn theo chính sách reauth của Google Workspace. Cách phân biệt — so 'vân tay' in ở dòng Backend với vân tay trên máy (chạy: node scripts/fetch-daily.mjs --dry-run). KHÁC nhau = secret chưa được cập nhật, dán lại là xong. GIỐNG nhau = credential loại này không dùng được từ CI, phải xin Data team service account key (script nhận sẵn, chỉ cần đổi giá trị secret)."
+          fi
           exit "$code"
 
       - name: Manifest phải có ngày cuối
