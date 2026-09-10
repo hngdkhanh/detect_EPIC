@@ -13,3 +13,6 @@ data_incoming
 # data app: chi giu 14 ngay, luon lay tu production/BigQuery, khong commit (ban trong repo luon cu)
 public/data/*.csv
 public/data/manifest.json
+
+# CSV lay tay ngoai cua so 14 ngay (nap qua nut "Nap CSV khac..."); co ten nhan vien + dia chi that, khong commit
+data_manual
