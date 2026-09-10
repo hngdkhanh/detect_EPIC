@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "append:data": "node scripts/append-data.mjs",
+    "push:data": "node scripts/push-supabase.mjs",
     "fetch:data": "node scripts/fetch-daily.mjs"
   },
   "dependencies": {

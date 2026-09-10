@@ -7,12 +7,21 @@ import SearchSelect from "./SearchSelect.jsx";
 import ReportView from "./ReportView.jsx";
 import { buildReport, isAbnormal, farOrdersOf, driverSummaries, removedDestinations, SCENARIOS } from "./report.js";
 import { downloadXlsx, slugify } from "./xlsx.js";
+import { hasSupabase, fetchDays, fetchDayCsv } from "./supa.js";
 
-/* Dữ liệu tách theo ngày trong /public/data — app chỉ tải file của ngày đang chọn.
-   manifest.json liệt kê các ngày có sẵn; thiếu nó thì rơi về file gộp cũ (LEGACY_CSV). */
+/* Nguồn data, thử theo thứ tự — app chỉ tải đơn của NGÀY đang chọn, không tải cả kho:
+     1. Supabase (VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY lúc build): bảng orders, view order_days
+        thay manifest, CSV trả thẳng từ PostgREST → vẫn parse bằng loadOrders.
+     2. /public/data/<date>.csv + manifest.json (dev local không có Supabase, chế độ file cũ).
+     3. Không có manifest → file gộp cũ (LEGACY_CSV). */
 const MANIFEST_URL = "data/manifest.json";
 const dayUrl = d => `data/${d}.csv`;
 const LEGACY_CSV = "test.csv";
+/* CSV của một ngày theo nguồn đang dùng; reject nếu không tải được */
+function loadDayText(source, d) {
+  if (source === "supabase") return fetchDayCsv(d);
+  return fetch(dayUrl(d)).then(r => (r.ok ? r.text() : Promise.reject(new Error("HTTP " + r.status))));
+}
 const DAY_CACHE_MAX = 3; // số ngày giữ trong RAM
 const EMPTY_SCAN = { rows: [], skipped: 0, drivers: 0 };
 
@@ -46,6 +55,7 @@ export default function App() {
   const [driverCsv, setDriverCsv] = useState(null);
   const [manifestDates, setManifestDates] = useState([]);
   const [perDay, setPerDay] = useState(false); // true = đang chạy chế độ tách theo ngày
+  const [source, setSource] = useState("files"); // "supabase" | "files" — nguồn của chế độ tách ngày
   const [loadingDay, setLoadingDay] = useState(false);
   const [dataErr, setDataErr] = useState(null);
   const dayCache = useRef(new Map());
@@ -68,15 +78,24 @@ export default function App() {
   const abnRef = useRef(null);
   const cfgRef = useRef(null);
 
-  /* ---- nạp manifest + drivers.csv, rồi tải ngày mới nhất ---- */
+  /* ---- nạp danh sách ngày (Supabase → manifest.json) + drivers.csv, rồi tải ngày mới nhất ---- */
   useEffect(() => {
+    const daysFromSupabase = hasSupabase()
+      ? fetchDays().then(ds => ds.map(x => x.date)).catch(err => {
+          console.warn("Supabase không trả được danh sách ngày, thử manifest.json:", err);
+          return null;
+        })
+      : Promise.resolve(null);
     Promise.all([
+      daysFromSupabase,
       fetch(MANIFEST_URL).then(r => (r.ok ? r.json() : null)).catch(() => null),
       fetch("drivers.csv").then(r => (r.ok ? r.text() : null)).catch(() => null),
-    ]).then(([man, drv]) => {
+    ]).then(([supaDays, man, drv]) => {
       setDriverCsv(drv);
-      const ds = man && Array.isArray(man.dates) ? man.dates.slice().sort() : null;
-      if (ds && ds.length) {
+      let ds = null;
+      if (supaDays && supaDays.length) { ds = supaDays.slice().sort(); setSource("supabase"); }
+      else if (man && Array.isArray(man.dates) && man.dates.length) { ds = man.dates.slice().sort(); setSource("files"); }
+      if (ds) {
         setManifestDates(ds);
         setPerDay(true);
         setDate(ds[ds.length - 1]); // mặc định ngày mới nhất
@@ -98,8 +117,7 @@ export default function App() {
     let cancelled = false;
     setLoadingDay(true);
     setDataErr(null);
-    fetch(dayUrl(date))
-      .then(r => (r.ok ? r.text() : Promise.reject(new Error("HTTP " + r.status))))
+    loadDayText(source, date)
       .then(txt => {
         if (cancelled) return;
         const next = D.loadOrders(txt);
@@ -111,7 +129,7 @@ export default function App() {
       .catch(err => { if (!cancelled) setDataErr(`Không tải được dữ liệu ngày ${date} (${err.message}).`); })
       .finally(() => { if (!cancelled) setLoadingDay(false); });
     return () => { cancelled = true; };
-  }, [perDay, date]);
+  }, [perDay, source, date]);
 
   const driverInfo = useMemo(() => D.buildDriverInfo(orders, driverCsv), [orders, driverCsv]);
   const bcOf = id => (driverInfo[id] && driverInfo[id].bc) || NO_BC;
@@ -183,8 +201,7 @@ export default function App() {
         else if (dayCache.current.has(d)) dayOrders = dayCache.current.get(d);
         else {
           try {
-            const txt = await fetch(dayUrl(d)).then(r => (r.ok ? r.text() : Promise.reject(new Error("HTTP " + r.status))));
-            dayOrders = D.loadOrders(txt);
+            dayOrders = D.loadOrders(await loadDayText(source, d));
           } catch { dayOrders = []; failed = true; }
         }
         if (cancelled) return;
@@ -198,7 +215,7 @@ export default function App() {
     })();
     return () => { cancelled = true; if (cancelScan) cancelScan(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, allDates, date, perDay]);
+  }, [view, allDates, date, perDay, source]);
 
   const report = useMemo(
     () => buildReport({ rows: scan.rows, skipped: scan.skipped, drivers: scan.drivers, date, history, dates: allDates }),
@@ -486,7 +503,10 @@ export default function App() {
 
       {dataErr && (
         <div className="data-err" role="alert">
-          ⚠️ {dataErr} Kiểm tra <code>public/data/</code> và <code>manifest.json</code>, chạy <code>node scripts/pull-prod-data.mjs</code> để kéo 14 ngày từ production về, hoặc <code>npm run append:data</code>.
+          ⚠️ {dataErr}{" "}
+          {source === "supabase"
+            ? <>Kiểm tra Supabase: bảng <code>orders</code>, policy đọc cho anon, key <code>VITE_SUPABASE_*</code> lúc build — F12 → Network để xem mã lỗi.</>
+            : <>Kiểm tra <code>public/data/</code> và <code>manifest.json</code>, hoặc đặt <code>VITE_SUPABASE_URL</code> / <code>VITE_SUPABASE_ANON_KEY</code> trong <code>.env.local</code> để đọc thẳng từ Supabase.</>}
         </div>
       )}
 

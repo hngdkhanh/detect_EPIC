@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 /*
- * fetch-daily.mjs — lấy data từ BigQuery rồi gọi append-data.mjs.
+ * fetch-daily.mjs — lấy data từ BigQuery rồi ghi vào kho data của app.
  * Thay cho bước "mở Chrome → BigQuery Console → tải CSV" trước đây.
+ *
+ * Kho đích chọn theo env: có SUPABASE_URL + SUPABASE_SERVICE_KEY → push-supabase.mjs (bảng orders,
+ * production dùng); không có → append-data.mjs (public/data/<date>.csv, chế độ file local cũ).
+ * --local ép ghi file dù có env Supabase.
  *
  * Hai cách nói chuyện với BigQuery, chọn tự động theo env:
  *   1. REST API (GitHub Actions / máy không có gcloud): đặt BQ_CREDENTIALS_JSON (nội dung JSON)
@@ -20,10 +24,12 @@
  *   node scripts/fetch-daily.mjs --to 2026-09-05 --days 7
  *   node scripts/fetch-daily.mjs --dry-run           # chỉ validate query + ước lượng bytes quét
  *   node scripts/fetch-daily.mjs --no-append         # chỉ ghi CSV ra data_incoming/
- *   node scripts/fetch-daily.mjs --replace-date      # truyền tiếp cho append-data (ghi đè cả ngày)
+ *   node scripts/fetch-daily.mjs --replace-date      # truyền tiếp cho bước ghi (ghi đè cả ngày)
+ *   node scripts/fetch-daily.mjs --local             # ghi public/data/ dù có env Supabase
  *
  * Env: BQ_PROJECT (mặc định dw-ghn), BQ_BIN (đường dẫn bq.cmd nếu không tự tìm được),
- *      BQ_CREDENTIALS_JSON / GOOGLE_APPLICATION_CREDENTIALS (bật chế độ REST).
+ *      BQ_CREDENTIALS_JSON / GOOGLE_APPLICATION_CREDENTIALS (bật chế độ REST),
+ *      SUPABASE_URL + SUPABASE_SERVICE_KEY (ghi vào Supabase thay vì public/data/).
  *
  * Exit code: 0 ok · 1 lỗi cấu hình/BigQuery · 2 query chạy được nhưng không có dòng nào cho
  * khoảng ngày yêu cầu (data D-1 chưa sẵn) — daily-deploy.ps1 dựa vào manifest nên tự bỏ qua deploy.
@@ -43,6 +49,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SQL_FILE = path.join(ROOT, "scripts", "bq_daily.sql");
 const APPEND = path.join(ROOT, "scripts", "append-data.mjs");
+const PUSH_SUPABASE = path.join(ROOT, "scripts", "push-supabase.mjs");
 const INCOMING = path.join(ROOT, "data_incoming");
 const PROJECT = process.env.BQ_PROJECT || "dw-ghn";
 const KEEP_INCOMING = 2;       // file CSV thô 5-45 MB/cái; giữ 2 bản gần nhất để soi khi có sự cố là đủ
@@ -414,12 +421,19 @@ try {
 
 /* ---------- append ---------- */
 
+/* Kho đích: Supabase khi có SUPABASE_URL + SUPABASE_SERVICE_KEY (production), ngược lại
+   public/data/ (chế độ file local). --local ép ghi file dù có env. */
+const toSupabase = !has("--local") &&
+  Boolean(process.env.SUPABASE_URL && (process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY));
+const writer = toSupabase ? PUSH_SUPABASE : APPEND;
+const writerName = path.basename(writer);
+
 if (noAppend) {
-  console.log("\n⏭  --no-append: dừng ở đây. Chạy tiếp: node scripts/append-data.mjs " + JSON.stringify(outFile) + "\n");
+  console.log(`\n⏭  --no-append: dừng ở đây. Chạy tiếp: node scripts/${writerName} ${JSON.stringify(outFile)}\n`);
   process.exit(0);
 }
 
-console.log("\n📦 append-data.mjs …\n");
-const ap = spawnSync(process.execPath, [APPEND, outFile, ...(replaceDate ? ["--replace-date"] : [])],
+console.log(`\n📦 ${writerName} ${toSupabase ? "→ Supabase" : "→ public/data/"} …\n`);
+const ap = spawnSync(process.execPath, [writer, outFile, ...(replaceDate ? ["--replace-date"] : [])],
   { stdio: "inherit", cwd: ROOT });
-if (ap.status !== 0) fail(`append-data.mjs exit ${ap.status}.`);
+if (ap.status !== 0) fail(`${writerName} exit ${ap.status}.`);

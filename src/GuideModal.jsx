@@ -149,8 +149,9 @@ export default function GuideModal({ open, onClose }) {
             Query ra đúng format trang cần: <code>load_date, warehouse_id, warehouse_name, employee_id, driver_name,
             order_code, contact_address, contact_latlng, is_epic, is_assigned</code> — group theo bưu cục, hiện tên
             và soát sai định vị hoạt động đầy đủ. Dữ liệu nạp bằng nút chỉ tồn tại trong phiên xem — muốn cố định
-            cho mọi người, thay file <code>public/test.csv</code> rồi <code>docker compose up -d --build</code>
-            (hoặc <code>vercel --prod</code>).
+            cho mọi người, đẩy file vào Supabase: <code>npm run push:data -- &lt;file.csv&gt;</code>
+            (cần <code>SUPABASE_URL</code> + <code>SUPABASE_SERVICE_KEY</code>, xem README). Bình thường không cần
+            làm tay: GitHub Actions tự lấy D-1 và D-2 mỗi sáng 10:00.
           </div>
         </div>
       </div>

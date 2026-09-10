@@ -1,38 +1,26 @@
-# Mỗi sáng: kéo cửa sổ 14 ngày đang chạy trên production về → hỏi BigQuery KHOẢNG 2 NGÀY (D-1 và
-# D-2) → ghép vào, bỏ ngày cũ nhất → build → deploy Vercel. Chạy trên GitHub, không cần máy user.
-#
-# Repo KHÔNG lưu data, mỗi lần chạy là một máy trắng. Cửa sổ 14 ngày là trạng thái, và trạng thái
-# đó nằm ở chính bản deploy đang chạy (scripts/pull-prod-data.mjs kéo về). Nhờ vậy BigQuery chỉ
-# quét ~2 GB/ngày thay vì ~8 GB, và repo không phình. Không kéo được từ production (sập, đổi
-# domain, bật Deployment Protection mà chưa có VERCEL_BYPASS) thì rơi về lấy trọn 14 ngày từ
-# BigQuery như trước — chậm và tốn hơn nhưng vẫn ra đúng kết quả.
+# Mỗi sáng: hỏi BigQuery KHOẢNG 2 NGÀY (D-1 và D-2) → upsert vào bảng orders trên Supabase.
+# Chạy trên GitHub, không cần máy user. KHÔNG deploy: data nằm ở Supabase, app đọc thẳng lúc
+# chạy, nên code và data tách hẳn — Vercel tự deploy code từ Git như một project Vite bình thường
+# (vercel.json bật lại git.deploymentEnabled.main từ 2026-09-10).
 #
 # Vì sao 2 ngày chứ không phải 1 (user chốt 2026-09-10): data nguồn sửa lùi — đơn được gán thêm
 # vài giờ sau, nên D-1 lấy lúc 10:00 sáng vẫn thiếu. Lấy chồng 2 ngày thì mỗi ngày được lấy hai
-# lần: một lần làm D-1, hôm sau một lần nữa làm D-2 (`--replace-date` ghi đè cả ngày). Sau lượt
-# thứ hai ngày đó mới ĐÓNG BĂNG. Lỡ một buổi sáng cũng tự vá được. Muốn làm mới cả cửa sổ:
-# Run workflow với days=14.
+# lần: một lần làm D-1, hôm sau một lần nữa làm D-2 (`--replace-date` xoá luôn dòng không còn trong
+# lượt mới). Sau lượt thứ hai ngày đó mới ĐÓNG BĂNG. Lỡ một buổi sáng cũng tự vá được.
+# Backfill / làm mới nhiều ngày: Run workflow với days lớn hơn (tối đa 60).
 #
-# QUAN TRỌNG — workflow này là ĐƯỜNG DUY NHẤT deploy production. `vercel.json` tắt Git
-# auto-deploy cho nhánh main, vì data không nằm trong repo: để Vercel tự build từ Git thì mỗi
-# lần push code, production sẽ tụt về mấy ngày data cũ còn sót trong repo. Vì vậy workflow chạy
-# cả khi push vào main (lấy data mới rồi deploy). Đừng bật lại Git auto-deploy khi chưa commit data.
+# push-supabase.mjs giữ SUPABASE_KEEP_DAYS ngày gần nhất (mặc định 90) — ngày cũ hơn bị xoá.
 #
 # Secrets cần có (Settings → Secrets and variables → Actions):
-#   BQ_CREDENTIALS_JSON  JSON credential BigQuery — service account key (nên dùng) hoặc
-#                        authorized_user (file %APPDATA%\gcloud\legacy_credentials\<email>\adc.json)
-#   VERCEL_TOKEN         token tạo ở https://vercel.com/account/tokens
-# VERCEL_ORG_ID / VERCEL_PROJECT_ID không phải bí mật (giống .vercel/project.json), để thẳng dưới đây.
-name: Daily data → Vercel
+#   BQ_CREDENTIALS_JSON   JSON credential BigQuery — service account key (nên dùng) hoặc
+#                         authorized_user (file %APPDATA%\gcloud\legacy_credentials\<email>\adc.json)
+#   SUPABASE_URL          https://<project-ref>.supabase.co
+#   SUPABASE_SERVICE_KEY  service_role key / secret key (Project Settings → API) — bỏ qua RLS, chỉ dùng ở CI
+name: Daily data → Supabase
 
 on:
   schedule:
     - cron: "0 3 * * *"          # 03:00 UTC = 10:00 Việt Nam
-  push:
-    branches: [main]             # đổi code cũng deploy, KÈM data mới (xem vercel.json)
-    paths-ignore:
-      - "**/*.md"
-      - "data_archive/**"
   workflow_dispatch:
     inputs:
       to:
@@ -40,13 +28,13 @@ on:
         required: false
         default: ""
       days:
-        description: "Số ngày hỏi BigQuery, kết thúc ở ngày cuối (2 = mặc định, D-1 + D-2; 14 = làm mới cả cửa sổ)"
+        description: "Số ngày hỏi BigQuery, kết thúc ở ngày cuối (2 = mặc định, D-1 + D-2; tối đa 60)"
         required: false
         default: "2"
-      deploy:
-        description: "Deploy Vercel sau khi lấy data"
+      dry_run:
+        description: "Chỉ chạy query + validate, không ghi vào Supabase"
         type: boolean
-        default: true
+        default: false
 
 concurrency:
   group: daily-data
@@ -55,11 +43,9 @@ concurrency:
 jobs:
   daily:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 30
     env:
       BQ_PROJECT: dw-ghn
-      VERCEL_ORG_ID: team_6vvURqAMyY9ShRf11h3vwwnO
-      VERCEL_PROJECT_ID: prj_PWpZT9Po9JBAGdoCSSYwEtmUpyKV
     steps:
       - uses: actions/checkout@v4
 
@@ -70,49 +56,43 @@ jobs:
       - name: Kiểm tra secrets
         env:
           HAS_BQ: ${{ secrets.BQ_CREDENTIALS_JSON != '' }}
-          HAS_VERCEL: ${{ secrets.VERCEL_TOKEN != '' }}
+          HAS_SB_URL: ${{ secrets.SUPABASE_URL != '' }}
+          HAS_SB_KEY: ${{ secrets.SUPABASE_SERVICE_KEY != '' }}
         run: |
           ok=1
           [ "$HAS_BQ" = "true" ]     || { echo "::error::Thiếu secret BQ_CREDENTIALS_JSON"; ok=0; }
-          [ "$HAS_VERCEL" = "true" ] || { echo "::error::Thiếu secret VERCEL_TOKEN"; ok=0; }
+          [ "$HAS_SB_URL" = "true" ] || { echo "::error::Thiếu secret SUPABASE_URL"; ok=0; }
+          [ "$HAS_SB_KEY" = "true" ] || { echo "::error::Thiếu secret SUPABASE_SERVICE_KEY"; ok=0; }
           [ $ok = 1 ]
 
-      # Xoá mấy file ngày còn commit trong repo trước (chúng chỉ để `npm run dev` local có data),
-      # rồi kéo cửa sổ thật từ production. Thất bại thì bước sau tự chuyển sang lấy 14 ngày.
-      - name: Kéo cửa sổ data đang chạy trên production
-        id: seed
+      # Kiểm tra kho đích TRƯỚC khi tốn tiền quét BigQuery: bảng có tồn tại, key ghi được không.
+      - name: Kiểm tra Supabase
         env:
-          PROD_URL: https://epic-order-map.vercel.app
-          VERCEL_BYPASS: ${{ secrets.VERCEL_BYPASS }}
-        run: |
-          rm -f public/data/*.csv public/data/manifest.json
-          if node scripts/pull-prod-data.mjs; then
-            echo "ok=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::warning::Không kéo được data từ production — sẽ hỏi BigQuery trọn 14 ngày thay vì 2."
-            echo "ok=false" >> "$GITHUB_OUTPUT"
-          fi
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: node scripts/push-supabase.mjs --trim-only --dry-run
 
-      - name: Lấy data từ BigQuery
+      - name: Lấy data từ BigQuery → Supabase
         id: fetch
         env:
           BQ_CREDENTIALS_JSON: ${{ secrets.BQ_CREDENTIALS_JSON }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           IN_TO: ${{ inputs.to }}
           IN_DAYS: ${{ inputs.days || '2' }}
-          SEED_OK: ${{ steps.seed.outputs.ok }}
+          IN_DRY: ${{ inputs.dry_run }}
         run: |
-          days="$IN_DAYS"
-          if [ "$SEED_OK" != "true" ]; then days=14; echo "không có cửa sổ từ production → hỏi BigQuery $days ngày"; fi
-          echo "hỏi BigQuery: $days ngày"
-          args=(--days "$days" --replace-date)
+          echo "hỏi BigQuery: $IN_DAYS ngày"
+          args=(--days "$IN_DAYS" --replace-date)
           [ -n "$IN_TO" ] && args+=(--to "$IN_TO")
+          [ "$IN_DRY" = "true" ] && args+=(--no-append)
           set +e
           node scripts/fetch-daily.mjs "${args[@]}"
           code=$?
           set -e
           echo "code=$code" >> "$GITHUB_OUTPUT"
           if [ "$code" = 2 ]; then
-            echo "::warning::BigQuery chưa có dòng nào cho khoảng ngày yêu cầu — bỏ qua deploy."
+            echo "::warning::BigQuery chưa có dòng nào cho khoảng ngày yêu cầu — Supabase giữ data cũ."
             exit 0
           fi
           # Nguyên nhân số 1 khi bước này đỏ: credential BigQuery hết hạn. Nói luôn cách phân biệt,
@@ -122,106 +102,28 @@ jobs:
           fi
           exit "$code"
 
-      - name: Manifest phải có ngày cuối
-        id: gate
-        if: steps.fetch.outputs.code == '0'
+      # Supabase phải có D-1 sau khi ghi; thiếu = data warehouse chưa nạp, cảnh báo để người xem biết.
+      - name: Supabase phải có ngày cuối
+        if: steps.fetch.outputs.code == '0' && inputs.dry_run != true
         env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           IN_TO: ${{ inputs.to }}
-          EVENT: ${{ github.event_name }}
-          WANT_DEPLOY: ${{ inputs.deploy }}
         run: |
           node -e '
-            const m = require("./public/data/manifest.json");
+            const url = process.env.SUPABASE_URL.replace(/\/+$/, ""), key = process.env.SUPABASE_SERVICE_KEY;
+            const r = await fetch(url + "/rest/v1/order_days?select=load_date,n&order=load_date.asc",
+              { headers: { apikey: key, Authorization: "Bearer " + key } });
+            if (!r.ok) { console.log("::error::order_days HTTP " + r.status); process.exit(1); }
+            const days = await r.json();
             const vn = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).format(new Date());
             const d = new Date(vn + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() - 1);
             const want = process.env.IN_TO || d.toISOString().slice(0, 10);
-            const latest = m.dates[m.dates.length - 1];
-            console.log("manifest:", m.dates.join(", "));
+            const latest = days.length ? days[days.length - 1].load_date : "(trống)";
+            console.log("supabase:", days.map(x => x.load_date + " (" + x.n + ")").join(", "));
             console.log("ngay moi nhat:", latest, "| can co:", want);
-            const ok = latest === want;
-            if (!ok) console.log("::warning::Chua co data " + want + " — bo qua deploy, production giu data cu.");
-            // workflow_dispatch: theo ô "deploy" người chạy chọn. schedule/push: luôn deploy.
-            const deploy = ok && (process.env.EVENT !== "workflow_dispatch" || process.env.WANT_DEPLOY === "true");
-            console.log("se deploy:", deploy);
-            require("fs").appendFileSync(process.env.GITHUB_OUTPUT, `ok=${ok}\ndeploy=${deploy}\n`);
-          '
-
-      # Cài một lần thay vì npx 3 lần (npx tải lại CLI mỗi lệnh, ~15s/lần).
-      # Ghim major để bản CLI mới không đổi hành vi giữa hai đêm.
-      - name: Cài Vercel CLI
-        if: steps.gate.outputs.deploy == 'true'
-        run: npm i -g vercel@59
-
-      # Gọi thẳng REST API thay vì `vercel whoami`, vì CLI gộp mọi lỗi thành một câu tối nghĩa
-      # ("User not found" khi token hợp lệ nhưng không thấy account/team). Mã HTTP của từng
-      # endpoint phân biệt được ngay: token sai (403) vs không thuộc team (403/404 ở project).
-      # Không in token; GitHub cũng tự che. Chỉ in độ dài để phát hiện dán thiếu/lẫn khoảng trắng.
-      - name: Kiểm tra token Vercel
-        if: steps.gate.outputs.deploy == 'true'
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-        run: |
-          n=${#VERCEL_TOKEN}
-          echo "do dai VERCEL_TOKEN: $n ky tu (token Vercel thuong 24; lech nhieu = dan thieu hoac lan khoang trang)"
-          case "$VERCEL_TOKEN" in
-            *[[:space:]]*) echo "::warning::Token co chua khoang trang/newline — dan lai cho sach." ;;
-          esac
-
-          u=$(curl -sS -o "$RUNNER_TEMP/user.json" -w '%{http_code}' \
-                -H "Authorization: Bearer $VERCEL_TOKEN" https://api.vercel.com/v2/user || echo 000)
-          echo "GET /v2/user -> HTTP $u"
-          if [ "$u" = 200 ]; then
-            node -e 'const j=require(process.env.RUNNER_TEMP+"/user.json");const u=j.user||j;console.log("  token thuoc account:",u.username||u.name||"?","|",u.email||"")'
-          elif [ "$u" = 404 ]; then
-            # Đã gặp thật 2026-09-08: token 60 ký tự, thấy project (200) nhưng /v2/user trả 404.
-            # Đó là token cấp ở Team/Project Settings, thuộc team chứ không thuộc user. Vercel CLI
-            # luôn phải phân giải user trước, nên mọi lệnh của nó chết ở "Could not retrieve
-            # Project Settings" dù token có quyền trên project. Chặn tại đây cho khỏi mất công.
-            echo "  than loi: $(head -c 300 "$RUNNER_TEMP/user.json")"
-            echo "::error::VERCEL_TOKEN không phải Personal Access Token — nó không gắn với user nào (do dai $n; token ca nhan dai 24). Vercel CLI bat buoc phai phan giai user, nen token cap o Team/Project Settings se khong dung duoc du co quyen tren project. Tao token o https://vercel.com/account/tokens (Account Settings -> Tokens), scope chon team so huu project, roi cap nhat secret VERCEL_TOKEN."
-            exit 1
-          else
-            echo "  than loi: $(head -c 300 "$RUNNER_TEMP/user.json")"
-            echo "::error::VERCEL_TOKEN không dùng được (HTTP $u; 403 = token sai hoac da bi thu hoi). Tao lai o https://vercel.com/account/tokens."
-            exit 1
-          fi
-
-          p=$(curl -sS -o "$RUNNER_TEMP/prj.json" -w '%{http_code}' \
-                -H "Authorization: Bearer $VERCEL_TOKEN" \
-                "https://api.vercel.com/v9/projects/$VERCEL_PROJECT_ID?teamId=$VERCEL_ORG_ID" || echo 000)
-          echo "GET /v9/projects/$VERCEL_PROJECT_ID -> HTTP $p"
-          if [ "$p" = 200 ]; then
-            node -e 'const j=require(process.env.RUNNER_TEMP+"/prj.json");console.log("  project:",j.name,"| id:",j.id)'
-            echo "Token OK — thay duoc project, deploy duoc."
-          else
-            echo "  than loi: $(head -c 300 "$RUNNER_TEMP/prj.json")"
-            echo "::error::Token khong truy cap duoc project epic-order-map. Token phai thuoc account la thanh vien cua team $VERCEL_ORG_ID (chu so huu project). Vao https://vercel.com/account/tokens, kiem tra goc tren phai dang dang nhap bang dung account do, tao token moi voi scope la team do, roi cap nhat secret VERCEL_TOKEN."
-            exit 1
-          fi
-
-      - name: Deploy Vercel
-        if: steps.gate.outputs.deploy == 'true'
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-        run: |
-          if ! vercel pull --yes --environment=production --token="$VERCEL_TOKEN"; then
-            echo "::error::Vercel không lấy được Project Settings. Token phải thuộc đúng account/team sở hữu project epic-order-map (org $VERCEL_ORG_ID, project $VERCEL_PROJECT_ID). Xem bước 'Kiểm tra token Vercel' ở trên: nếu account in ra không phải chủ project, tạo lại token ở https://vercel.com/account/tokens với scope là team đó rồi cập nhật secret VERCEL_TOKEN."
-            exit 1
-          fi
-          vercel build --prod --token="$VERCEL_TOKEN"
-          url=$(vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN")
-          echo "deploy: $url"
-          {
-            echo "### Deployed"
-            echo "$url"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Tóm tắt
-        if: always()
-        run: |
-          {
-            echo "### Data"
-            echo '```'
-            cat public/data/manifest.json 2>/dev/null | head -40 || echo "(khong co manifest)"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+            if (latest !== want) console.log("::warning::Supabase chua co data " + want + " — app dang hien ngay cu hon.");
+            const fs = await import("node:fs");
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,
+              "### Supabase\n```\n" + days.map(x => x.load_date + "  " + x.n).join("\n") + "\n```\n");
+          ' --input-type=module

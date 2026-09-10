@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 /*
- * pull-prod-data.mjs — kéo cửa sổ data đang chạy trên production về public/data/.
+ * pull-prod-data.mjs — kéo cửa sổ data đang chạy trên một bản deploy KIỂU CŨ (public/data/ +
+ * manifest.json) về public/data/.
  *
- * Vì sao cần: repo KHÔNG lưu data, mỗi lần CI chạy là một máy trắng. Muốn mỗi sáng chỉ hỏi
- * BigQuery đúng ngày hôm qua thì 13 ngày còn lại phải lấy từ đâu đó — và nơi duy nhất đang giữ
- * chúng là bản deploy đang chạy. Script này tải manifest.json + từng file ngày từ đó, kiểm tra
- * header, rồi ghi vào public/data/. Sau đó fetch-daily.mjs thêm ngày hôm qua, append-data.mjs
- * bỏ ngày cũ nhất, và workflow deploy lại. Cửa sổ 14 ngày cứ thế lăn từng ngày.
+ * Từ 2026-09-10 data nằm ở Supabase (xem scripts/push-supabase.mjs), production không còn phục vụ
+ * public/data/ nữa, nên script này chỉ còn hai việc:
+ *   - di trú một lần: kéo 14 ngày từ bản deploy cũ rồi `node scripts/push-supabase.mjs --dir public/data`
+ *   - kéo data từ một bản docker/nginx nội bộ vẫn chạy chế độ file (PROD_URL=http://host:8080)
+ * CI không gọi nó nữa.
  *
- * Tất cả-hoặc-không: một file hỏng là thoát mã 1 và KHÔNG ghi gì, để workflow rơi về lấy trọn
- * 14 ngày từ BigQuery thay vì deploy một cửa sổ có lỗ.
+ * Tất cả-hoặc-không: một file hỏng là thoát mã 1 và KHÔNG ghi gì.
  *
  * Cách dùng:
  *   node scripts/pull-prod-data.mjs                 # kéo về public/data/ (cũng tiện cho dev local)
